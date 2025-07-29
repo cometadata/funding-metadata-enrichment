@@ -2,6 +2,8 @@
 
 This pipeline extracts funding acknowledgements from PDF documents, converting them into structured metadata linking them to their DOIs.
 
+Optional preprocessing: If PDFs contain marginal line numbers or repeating headers that interfere with extraction,  [preprocess_pdfs utility](https://github.com/cometadata/funding-metadata-enrichment/tree/main/extract_funding_from_full_text/preprocess_pdfs) can be used to remove them before proceeding.
+
 The extraction begins with the [batch_convert_pdfs utility](https://github.com/cometadata/funding-metadata-enrichment/tree/main/extract_funding_from_full_text/batch_convert_pdfs). This tool processes PDF files using [Docling](https://github.com/docling-project/docling), converting them to multiple formats, including markdown.
 
 Once the PDFs are converted to markdown, [extract_funding_w_reranker utility](https://github.com/cometadata/funding-metadata-enrichment/tree/main/extract_funding_from_full_text/extract_funding_w_reranker) is used to extract the funding statements. Here, we employ a two-stage approach to identify and extract:
