@@ -1,0 +1,21 @@
+# Funding acknowledgement search queries
+# Each query is designed to find different types of funding mentions
+
+queries:
+  general_acknowledgments: "acknowledgments acknowledgements funding grant support foundation"
+  
+  specific_funding_sections: "This work was supported by funded by grant from acknowledge funding"
+  
+  grant_numbers: "grant number award number project number funding number grant ID award ID"
+  
+  research_support: "research supported by financial support from funding support from supported in part by"
+  
+  foundation_grants: "foundation grant foundation award foundation funding private foundation charitable foundation"
+  
+  government_funding: "government grant federal funding state funding ministry department"
+  
+  university_funding: "university grant institutional support internal funding seed funding startup funds"
+  
+  industry_funding: "industry partner corporate sponsor industrial collaboration commercial funding"
+  
+  fellowship_support: "fellowship postdoctoral fellowship doctoral fellowship research fellowship scholarship"
