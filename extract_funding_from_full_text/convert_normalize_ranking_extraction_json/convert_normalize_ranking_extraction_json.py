@@ -203,7 +203,8 @@ def convert_funding_to_simple_json(
     dois_set=None,
     validate_dois=False,
     normalize=False,
-    exclude_problematic=False
+    exclude_problematic=False,
+    use_filename=False
 ):
     clean_results = []
     problematic_results = []
@@ -220,35 +221,45 @@ def convert_funding_to_simple_json(
         if not clean_statements and not problematic_statements:
             continue
 
-        doi = filename_to_doi(filename)
+        doi = filename_to_doi(filename) if not use_filename else None
 
         if exclude_problematic and problematic_statements and not clean_statements:
-            # Skip this document entirely if it only has problematic statements
             continue
 
         if clean_statements:
-            result = {
-                'doi': doi,
-                'funding_statements': clean_statements
-            }
+            if use_filename:
+                result = {
+                    'filename': filename,
+                    'funding_statements': clean_statements
+                }
+            else:
+                result = {
+                    'doi': doi,
+                    'funding_statements': clean_statements
+                }
 
-            if validate_dois and dois_set:
+            if validate_dois and dois_set and not use_filename:
                 if doi not in dois_set:
                     print(f"Warning: DOI {doi} not found in dois.csv")
                     skipped_count += 1
 
             clean_results.append(result)
         elif not exclude_problematic and problematic_statements:
-            # Include problematic statements in main output if not excluding
-            result = {
-                'doi': doi,
-                'funding_statements': problematic_statements
-            }
+            if use_filename:
+                result = {
+                    'filename': filename,
+                    'funding_statements': problematic_statements
+                }
+            else:
+                result = {
+                    'doi': doi,
+                    'funding_statements': problematic_statements
+                }
             clean_results.append(result)
 
         if problematic_statements:
             problematic_entry = {
-                'doi': doi,
+                'doi': doi if not use_filename else None,
                 'filename': filename,
                 'funding_statements': problematic_statements,
                 'file_path': doc.get('file_path', '')
@@ -261,25 +272,52 @@ def convert_funding_to_simple_json(
     return clean_results, problematic_results
 
 
+def write_csv_output(results, output_file, use_filename=False):
+    with open(output_file, 'w', encoding='utf-8') as f:
+        if use_filename:
+            fieldnames = ['filename', 'funding_statement']
+        else:
+            fieldnames = ['doi', 'funding_statement']
+        
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for result in results:
+            key = 'filename' if use_filename else 'doi'
+            for statement in result['funding_statements']:
+                row = {
+                    key: result[key],
+                    'funding_statement': statement
+                }
+                writer.writerow(row)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert funding extraction JSON to simple JSON format with DOIs and funding statements.'
+        description='Convert funding extraction JSON to simple JSON or CSV format with filenames/DOIs and funding statements (defaults to filenames).'
     )
     parser.add_argument('-n', '--normalize', action='store_true',
                         help='Normalize funding statements to correct whitespace, accents, markdown escaping, and remove line numbers')
     parser.add_argument('-i', '--input', required=True,
                         help='Input funding JSON file')
     parser.add_argument(
-        '-o', '--output', help='Primary output JSON file name (defaults to input basename + _converted.json)')
-    parser.add_argument('-d', '--dois', required=True,
-                        help='DOIs CSV file for validation')
+        '-o', '--output', help='Primary output file name (defaults to input basename + _converted.json or .csv)')
+    parser.add_argument('-d', '--dois',
+                        help='DOIs CSV file for validation (required only when using --use-doi)')
     parser.add_argument('-e', '--exclude-problematic', action='store_true',
                         help='Exclude entries with problematic formatting from the output')
+    parser.add_argument('--csv', action='store_true',
+                        help='Output in CSV format instead of JSON')
+    parser.add_argument('--use-doi', action='store_true',
+                        help='Use DOI instead of filename in output (requires --dois for validation)')
 
     args = parser.parse_args()
 
     funding_file = args.input
     dois_file = args.dois
+
+    if args.use_doi and not dois_file:
+        parser.error("--dois is required when using --use-doi")
 
     input_path = Path(funding_file)
     base_name = input_path.stem
@@ -287,7 +325,8 @@ def main():
     if args.output:
         output_file = args.output
     else:
-        output_file = f"{base_name}_converted.json"
+        extension = '.csv' if args.csv else '.json'
+        output_file = f"{base_name}_converted{extension}"
 
     problematic_file = f"{base_name}_problematic.json"
 
@@ -299,35 +338,39 @@ def main():
     funding_data = load_funding_data(funding_file)
 
     dois_set = None
-    if Path(dois_file).exists():
-        print(f"Loading DOIs from {dois_file}...")
-        dois_set = load_dois(dois_file)
-        print(f"Loaded {len(dois_set)} DOIs for validation")
-    else:
-        print(f"Warning: {dois_file} not found, skipping DOI validation")
+    if args.use_doi and dois_file:
+        if Path(dois_file).exists():
+            print(f"Loading DOIs from {dois_file}...")
+            dois_set = load_dois(dois_file)
+            print(f"Loaded {len(dois_set)} DOIs for validation")
+        else:
+            print(f"Warning: {dois_file} not found, skipping DOI validation")
 
+    output_format = "CSV" if args.csv else "JSON"
+    use_filename = not args.use_doi
+    id_type = "filenames" if use_filename else "DOIs"
+    
+    print(f"Converting to {output_format} format using {id_type}...")
     if args.normalize:
-        if args.exclude_problematic:
-            print("Converting to simple JSON format with normalization and excluding problematic entries...")
-        else:
-            print("Converting to simple JSON format with normalization...")
-    else:
-        if args.exclude_problematic:
-            print("Converting to simple JSON format and excluding problematic entries...")
-        else:
-            print("Converting to simple JSON format...")
+        print("  - With normalization")
+    if args.exclude_problematic:
+        print("  - Excluding problematic entries")
 
     clean_results, problematic_results = convert_funding_to_simple_json(
         funding_data,
         dois_set=dois_set,
         validate_dois=True if dois_set else False,
         normalize=args.normalize,
-        exclude_problematic=args.exclude_problematic
+        exclude_problematic=args.exclude_problematic,
+        use_filename=use_filename
     )
 
     print(f"Saving {len(clean_results)} clean entries to {output_file}...")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(clean_results, f, indent=2, ensure_ascii=False)
+    if args.csv:
+        write_csv_output(clean_results, output_file, use_filename=use_filename)
+    else:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(clean_results, f, indent=2, ensure_ascii=False)
 
     if problematic_results:
         print(f"Saving {len(problematic_results)} problematic entries to {problematic_file}...")
@@ -339,10 +382,15 @@ def main():
     print(f"Documents with clean funding statements: {len(clean_results)}")
     print(f"Documents with problematic formatting: {len(problematic_results)}")
 
-    if clean_results:
+    if clean_results and not args.csv:
         print("\nSample clean output:")
         sample = clean_results[0]
         print(json.dumps(sample, indent=2))
+    elif clean_results and args.csv:
+        print(f"\nCSV file created with {len(clean_results)} entries")
+        if clean_results:
+            key = 'filename' if use_filename else 'doi'
+            print(f"Sample: {key}={clean_results[0][key]}, statements={len(clean_results[0]['funding_statements'])}")
 
     if problematic_results:
         print("\nSample problematic output:")
