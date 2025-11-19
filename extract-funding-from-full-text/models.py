@@ -73,7 +73,9 @@ class DocumentResult(BaseModel):
 
 class ProcessingParameters(BaseModel):
     input_path: str
+    input_format: str = 'markdown'
     normalize: bool = False
+    heal_markdown: bool = False
     provider: Optional[str] = None
     model: Optional[str] = None
     threshold: float = 28.0
@@ -82,7 +84,9 @@ class ProcessingParameters(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return {
             'input_path': self.input_path,
+            'input_format': self.input_format,
             'normalize': self.normalize,
+            'heal_markdown': self.heal_markdown,
             'provider': self.provider,
             'model': self.model,
             'threshold': self.threshold,

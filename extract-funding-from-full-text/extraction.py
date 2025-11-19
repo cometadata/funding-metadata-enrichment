@@ -1,6 +1,8 @@
 import re
 import os
-from typing import List, Dict, Optional
+import threading
+from typing import Any, Dict, List, Optional, Tuple
+from typing import Pattern
 
 import torch
 from pylate import models, rank
@@ -15,17 +17,98 @@ def split_into_paragraphs(text: str) -> List[str]:
     return paragraphs
 
 
+_MODEL_CACHE: Dict[str, models.ColBERT] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+_PATTERN_CACHE: Dict[Tuple[Optional[str], Optional[str]], List[Pattern]] = {}
+_PATTERN_CACHE_LOCK = threading.Lock()
+
+_QUERY_EMBEDDINGS_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Dict[str, Any]] = {}
+_QUERY_CACHE_LOCK = threading.Lock()
+
+
+def _get_model(model_name: str) -> models.ColBERT:
+    with _MODEL_CACHE_LOCK:
+        model = _MODEL_CACHE.get(model_name)
+        if model is None:
+            model = models.ColBERT(model_name_or_path=model_name)
+            _MODEL_CACHE[model_name] = model
+        return model
+
+
+def _get_pattern_cache_key(
+    patterns_file: Optional[str],
+    custom_config_dir: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
+    return (patterns_file or "__default__", custom_config_dir or "__default__")
+
+
+def _get_compiled_patterns(
+    patterns_file: Optional[str],
+    custom_config_dir: Optional[str]
+) -> List[Pattern]:
+    key = _get_pattern_cache_key(patterns_file, custom_config_dir)
+    with _PATTERN_CACHE_LOCK:
+        cached = _PATTERN_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    patterns = load_funding_patterns(patterns_file, custom_config_dir)
+    compiled = [re.compile(pattern) for pattern in patterns]
+
+    with _PATTERN_CACHE_LOCK:
+        _PATTERN_CACHE[key] = compiled
+
+    return compiled
+
+
+def _get_query_cache_key(model_name: str, queries: Dict[str, str]) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
+    return (model_name, tuple(sorted(queries.items())))
+
+
+def _get_query_embeddings(
+    model_name: str,
+    queries: Dict[str, str],
+    model: models.ColBERT
+) -> Dict[str, Any]:
+    if not queries:
+        return {}
+
+    key = _get_query_cache_key(model_name, queries)
+    with _QUERY_CACHE_LOCK:
+        cached = _QUERY_EMBEDDINGS_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    embeddings: Dict[str, Any] = {}
+    for query_name, query_text in queries.items():
+        embeddings[query_name] = model.encode(
+            [query_text],
+            batch_size=1,
+            is_query=True,
+            show_progress_bar=False
+        )
+
+    with _QUERY_CACHE_LOCK:
+        _QUERY_EMBEDDINGS_CACHE[key] = embeddings
+
+    return embeddings
+
+
 def is_likely_funding_statement(
     paragraph: str, 
     score: float, 
     threshold: float = 28.0,
     patterns_file: Optional[str] = None,
-    custom_config_dir: Optional[str] = None
+    custom_config_dir: Optional[str] = None,
+    compiled_patterns: Optional[List[Pattern]] = None
 ) -> bool:
     if score < threshold:
         return False
     
-    funding_patterns = load_funding_patterns(patterns_file, custom_config_dir)
+    funding_patterns = compiled_patterns
+    if funding_patterns is None:
+        funding_patterns = _get_compiled_patterns(patterns_file, custom_config_dir)
     
     paragraph_lower = paragraph.lower()
     return any(re.search(pattern, paragraph_lower) for pattern in funding_patterns)
@@ -130,8 +213,9 @@ def extract_funding_from_long_paragraph(paragraph: str) -> str:
 
 
 def extract_funding_statements(
-    file_path: str,
     queries: Dict[str, str],
+    file_path: Optional[str] = None,
+    content: Optional[str] = None,
     model_name: str = 'lightonai/GTE-ModernColBERT-v1',
     top_k: int = 5,
     threshold: float = 28.0,
@@ -141,14 +225,19 @@ def extract_funding_statements(
 ) -> List[FundingStatement]:
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-    model = models.ColBERT(model_name_or_path=model_name)
+    model = _get_model(model_name)
 
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+    if content is None:
+        if not file_path:
+            raise ValueError("Either file_path or content must be provided")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
     
     paragraphs = split_into_paragraphs(content)
     if not paragraphs:
         return []
+
+    compiled_patterns = _get_compiled_patterns(patterns_file, custom_config_dir)
 
     documents_embeddings = model.encode(
         paragraphs,
@@ -157,16 +246,20 @@ def extract_funding_statements(
         show_progress_bar=False
     )
 
+    query_embeddings_map = _get_query_embeddings(model_name, queries, model)
+
     seen_statements = set()
     funding_statements = []
 
     for query_name, query_text in queries.items():
-        query_embeddings = model.encode(
-            [query_text],
-            batch_size=1,
-            is_query=True,
-            show_progress_bar=False
-        )
+        query_embeddings = query_embeddings_map.get(query_name)
+        if query_embeddings is None:
+            query_embeddings = model.encode(
+                [query_text],
+                batch_size=1,
+                is_query=True,
+                show_progress_bar=False
+            )
 
         doc_ids = list(range(len(paragraphs)))
         reranked = rank.rerank(
@@ -183,7 +276,12 @@ def extract_funding_statements(
                 score = float(result['score'])
                 paragraph = paragraphs[para_id]
 
-                if is_likely_funding_statement(paragraph, score, threshold, patterns_file, custom_config_dir):
+                if is_likely_funding_statement(
+                    paragraph,
+                    score,
+                    threshold,
+                    compiled_patterns=compiled_patterns
+                ):
                     if should_extract_full_paragraph(paragraph, score):
                         statement_text = paragraph.strip()
                     elif len(paragraph) > 1000:

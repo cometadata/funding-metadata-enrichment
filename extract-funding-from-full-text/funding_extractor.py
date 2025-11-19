@@ -2,9 +2,11 @@ import os
 import sys
 import json
 import argparse
+import concurrent.futures
+import multiprocessing
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from models import (
     FundingStatement,
@@ -18,8 +20,15 @@ from extraction import extract_funding_statements
 from normalization import normalize_funding_statement, is_improperly_formatted
 from structured_extraction import extract_structured_entities
 from providers import ModelProvider, get_provider_config, validate_provider_requirements
-from utils import find_markdown_files, load_checkpoint, save_checkpoint, get_file_hash
+from document_loader import (
+    DocumentPayload,
+    build_markdown_documents,
+    determine_input_format,
+    stream_parquet_documents
+)
+from utils import load_checkpoint, save_checkpoint, get_file_hash
 from config_loader import load_queries
+from markdown_healer import heal_markdown
 
 
 def parse_args():
@@ -43,9 +52,24 @@ Examples:
     )
 
     parser.add_argument('-i', '--input', required=True,
-                        help='Input markdown file or directory containing markdown files')
+                        help='Input markdown file, directory, or parquet dataset')
     parser.add_argument('-o', '--output', default='funding_results.json',
                         help='Output JSON file (default: funding_results.json)')
+    parser.add_argument(
+        '--input-format',
+        choices=['markdown', 'parquet'],
+        help='Force the input format instead of auto-detecting')
+    parser.add_argument(
+        '--parquet-text-column',
+        help='Column containing markdown text when reading parquet datasets (default: auto-detect, preferring "markdown")')
+    parser.add_argument(
+        '--parquet-id-column',
+        help='Column containing a unique identifier for each parquet row')
+    parser.add_argument(
+        '--parquet-batch-size',
+        type=int,
+        default=64,
+        help='Number of parquet rows to load per batch (default: 64)')
     parser.add_argument(
         '-q', '--queries', help='YAML file containing search queries (uses defaults if not provided)')
     parser.add_argument(
@@ -59,6 +83,8 @@ Examples:
 
     parser.add_argument('--normalize', action='store_true',
                         help='Normalize funding statements (fix whitespace, accents, etc.)')
+    parser.add_argument('--heal-markdown', action='store_true',
+                        help='Reflow markdown converted from PDFs before parsing')
     parser.add_argument('--skip-extraction', action='store_true',
                         help='Skip semantic extraction (use existing results file)')
     parser.add_argument('--skip-structured', action='store_true',
@@ -121,22 +147,29 @@ def save_results(results: ProcessingResults, output_file: str):
     os.replace(temp_file, output_file)
 
 
-def process_markdown_file(
-    file_path: str,
+def process_document(
+    document: DocumentPayload,
     args: argparse.Namespace,
     queries: Dict[str, str]
 ) -> Optional[DocumentResult]:
 
-    filename = os.path.basename(file_path)
-
     if args.verbose:
-        print(f"Processing: {filename}")
+        print(f"Processing: {document.document_id}")
 
-    result = DocumentResult(filename=filename)
+    result = DocumentResult(filename=document.document_id)
 
     if not args.skip_extraction:
+        try:
+            content = document.load_text()
+        except Exception as exc:
+            print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
+            return None
+
+        if args.heal_markdown:
+            content = heal_markdown(content)
+
         statements = extract_funding_statements(
-            file_path=file_path,
+            content=content,
             queries=queries,
             model_name=args.colbert_model,
             top_k=args.top_k,
@@ -148,9 +181,9 @@ def process_markdown_file(
 
         if not statements:
             if args.verbose:
-                print(f"  No funding statements found in {filename}")
+                print(f"  No funding statements found in {document.document_id}")
             result.funding_statements = []
-            result.structured_entities = []
+            result.extraction_results = []
             return result
 
         for stmt in statements:
@@ -166,6 +199,9 @@ def process_markdown_file(
 
         if args.verbose:
             print(f"  Found {len(statements)} funding statements")
+            for stmt in statements:
+                preview = stmt.statement.replace('\n', ' ')[:240]
+                print(f"    [{stmt.score:.1f}] {preview}")
 
     if not args.skip_structured and result.funding_statements:
         unique_statements = list(
@@ -246,39 +282,104 @@ def main():
             print(f"Error: {e}")
             sys.exit(1)
 
-    if input_path.is_file():
-        md_files = [str(input_path)]
-    else:
-        md_files = find_markdown_files(str(input_path))
+    input_format = determine_input_format(input_path, args.input_format)
 
-    if not md_files:
-        print("No markdown files found")
-        sys.exit(0)
-
-    print(f"Found {len(md_files)} markdown files to process")
-
-    checkpoint_data = {}
+    checkpoint_data: Dict[str, Any] = {}
     if args.resume and not args.force:
         checkpoint_data = load_checkpoint(checkpoint_file)
-        print(f"Resuming from checkpoint: {len(checkpoint_data.get('processed_files', {}))} files already processed")
+        processed_total = len(checkpoint_data.get('processed_files', {}))
+        print(f"Resuming from checkpoint: {processed_total} documents already processed")
+    else:
+        checkpoint_data = {
+            'processed_files': {},
+            'last_update': None,
+            'total_processed': 0
+        }
 
-    files_to_process = []
-    for file_path in md_files:
-        file_hash = get_file_hash(file_path)
-        if args.force or file_hash not in checkpoint_data.get('processed_files', {}):
-            files_to_process.append(file_path)
+    checkpoint_data.setdefault('processed_files', {})
+    processed_lookup = checkpoint_data.get('processed_files', {})
 
-    if not files_to_process:
-        print("All files already processed")
-        return
+    documents_iter: Iterator[Tuple[DocumentPayload, str]]
+    discovered_documents: Optional[int] = None
+    total_documents: Optional[int] = None
 
-    print(f"Processing {len(files_to_process)} files...")
+    if input_format == 'parquet':
+        text_fallbacks = [] if args.parquet_text_column else [
+            'markdown',
+            'content',
+            'text',
+            'body'
+        ]
+        id_fallbacks = [] if args.parquet_id_column else [
+            'source_id',
+            'doc_id',
+            'document_id',
+            'id',
+            'file_name',
+            'filename'
+        ]
+        parquet_iterable, discovered_documents = stream_parquet_documents(
+            input_path=input_path,
+            text_column=args.parquet_text_column,
+            id_column=args.parquet_id_column,
+            batch_size=args.parquet_batch_size,
+            fallback_text_columns=text_fallbacks,
+            fallback_id_columns=id_fallbacks
+        )
+        if discovered_documents == 0:
+            print("No parquet rows found to process")
+            return
+
+        if discovered_documents is not None:
+            print(f"Discovered {discovered_documents} parquet rows to process")
+        else:
+            print("Scanning parquet dataset for funding statements...")
+
+        def parquet_iterator() -> Iterator[Tuple[DocumentPayload, str]]:
+            for doc in parquet_iterable:
+                doc_hash = get_file_hash(doc.checkpoint_key)
+                if args.force or doc_hash not in processed_lookup:
+                    yield doc, doc_hash
+
+        documents_iter = parquet_iterator()
+        if discovered_documents is not None and not args.force:
+            total_documents = max(discovered_documents - len(processed_lookup), 0)
+        else:
+            total_documents = discovered_documents
+    else:
+        markdown_docs = build_markdown_documents(input_path)
+        if not markdown_docs:
+            print("No markdown files found")
+            sys.exit(0)
+
+        print(f"Found {len(markdown_docs)} markdown files to process")
+
+        docs_with_hashes: List[Tuple[DocumentPayload, str]] = []
+        for doc in markdown_docs:
+            doc_hash = get_file_hash(doc.checkpoint_key)
+            if args.force or doc_hash not in processed_lookup:
+                docs_with_hashes.append((doc, doc_hash))
+
+        if not docs_with_hashes:
+            print("All documents already processed")
+            return
+
+        total_documents = len(docs_with_hashes)
+
+        def markdown_iterator() -> Iterator[Tuple[DocumentPayload, str]]:
+            for item in docs_with_hashes:
+                yield item
+
+        documents_iter = markdown_iterator()
+        print(f"Processing {total_documents} files...")
 
     results = load_existing_results(output_file) or ProcessingResults(
         timestamp=datetime.now().isoformat(),
         parameters=ProcessingParameters(
             input_path=str(input_path),
+            input_format=input_format,
             normalize=args.normalize,
+             heal_markdown=args.heal_markdown,
             provider=args.provider if not args.skip_structured else None,
             model=args.model if not args.skip_structured else None,
             threshold=args.threshold,
@@ -287,54 +388,181 @@ def main():
         results={},
         summary={}
     )
+    results.update_summary()
 
     batch_results = []
     processed_count = 0
 
+    if args.workers is not None:
+        worker_count = max(1, args.workers)
+    else:
+        cpu_count = os.cpu_count() or 1
+        worker_count = max(1, cpu_count - 1)
+
+    use_parallel = worker_count > 1
+    if use_parallel:
+        print(f"Using {worker_count} worker processes")
+
+    max_pending_futures = worker_count * 2 if use_parallel else 0
+    pending_futures = set()
+    future_to_metadata: Dict[concurrent.futures.Future, Dict[str, str]] = {}
+    executor: Optional[concurrent.futures.ProcessPoolExecutor] = None
+
+    def build_document_metadata(document: DocumentPayload, doc_hash: str) -> Dict[str, str]:
+        return {
+            'doc_hash': doc_hash,
+            'path': document.file_path or document.document_id,
+            'document_id': document.document_id
+        }
+
+    def apply_document_result(doc: DocumentResult):
+        summary = results.summary or {}
+        for key in ('total_files', 'files_with_funding', 'total_statements', 'total_funders'):
+            summary.setdefault(key, 0)
+
+        existing = results.results.get(doc.filename)
+        if existing:
+            summary['total_statements'] -= len(existing.funding_statements)
+            existing_funders = sum(len(res.funders) for res in existing.extraction_results)
+            summary['total_funders'] -= existing_funders
+            if existing.has_funding():
+                summary['files_with_funding'] -= 1
+        else:
+            summary['total_files'] += 1
+
+        summary['total_statements'] += len(doc.funding_statements)
+        new_funders = sum(len(res.funders) for res in doc.extraction_results)
+        summary['total_funders'] += new_funders
+        if doc.has_funding():
+            summary['files_with_funding'] += 1
+
+        results.summary = summary
+        results.results[doc.filename] = doc
+
+    def flush_batch():
+        nonlocal batch_results
+        if not batch_results:
+            return
+
+        for doc in batch_results:
+            apply_document_result(doc)
+
+        save_results(results, output_file)
+        save_checkpoint(checkpoint_file, checkpoint_data)
+
+        if total_documents is not None and total_documents > 0:
+            print(f"Processed {processed_count}/{total_documents} documents, saved checkpoint")
+        else:
+            print(f"Processed {processed_count} documents, saved checkpoint")
+
+        batch_results = []
+
+    def handle_completed(metadata: Dict[str, str], doc_result: Optional[DocumentResult]):
+        nonlocal batch_results, processed_count
+        if doc_result:
+            batch_results.append(doc_result)
+
+        if 'processed_files' not in checkpoint_data:
+            checkpoint_data['processed_files'] = {}
+
+        checkpoint_data['processed_files'][metadata['doc_hash']] = {
+            'path': metadata['path'],
+            'document_id': metadata['document_id'],
+            'processed_at': datetime.now().isoformat(),
+            'found_funding': bool(doc_result and doc_result.funding_statements)
+        }
+        processed_count += 1
+
+        if len(batch_results) >= args.batch_size:
+            flush_batch()
+
+    def drain_futures(wait_all: bool = False):
+        if not pending_futures:
+            return
+
+        return_when = concurrent.futures.ALL_COMPLETED if wait_all else concurrent.futures.FIRST_COMPLETED
+        done, _ = concurrent.futures.wait(pending_futures, return_when=return_when)
+
+        for future in done:
+            pending_futures.remove(future)
+            metadata = future_to_metadata.pop(future, None)
+            if metadata is None:
+                continue
+            try:
+                doc_result = future.result()
+            except Exception as exc:
+                print(f"  Error processing {metadata['document_id']}: {exc}")
+                doc_result = None
+            handle_completed(metadata, doc_result)
+
     try:
-        for i, file_path in enumerate(files_to_process):
-            doc_result = process_markdown_file(file_path, args, queries)
+        if use_parallel:
+            ctx = multiprocessing.get_context("spawn")
+            executor = concurrent.futures.ProcessPoolExecutor(
+                max_workers=worker_count,
+                mp_context=ctx
+            )
 
-            if doc_result:
-                batch_results.append(doc_result)
+        for document, doc_hash in documents_iter:
+            metadata = build_document_metadata(document, doc_hash)
 
-            file_hash = get_file_hash(file_path)
-            if 'processed_files' not in checkpoint_data:
-                checkpoint_data['processed_files'] = {}
-            checkpoint_data['processed_files'][file_hash] = {
-                'path': file_path,
-                'processed_at': datetime.now().isoformat(),
-                'found_funding': doc_result is not None and len(doc_result.funding_statements) > 0
-            }
-            processed_count += 1
+            if use_parallel and executor:
+                while len(pending_futures) >= max_pending_futures:
+                    drain_futures()
 
-            if len(batch_results) >= args.batch_size or i == len(files_to_process) - 1:
-                for doc in batch_results:
-                    results.results[doc.filename] = doc
+                future = executor.submit(process_document, document, args, queries)
+                pending_futures.add(future)
+                future_to_metadata[future] = metadata
+            else:
+                doc_result = process_document(document, args, queries)
+                handle_completed(metadata, doc_result)
 
-                results.update_summary()
-
-                save_results(results, output_file)
-                save_checkpoint(checkpoint_file, checkpoint_data)
-
-                print(f"Processed {processed_count}/{len(files_to_process)} files, saved checkpoint")
-                batch_results = []
+        if use_parallel:
+            drain_futures(wait_all=True)
 
     except KeyboardInterrupt:
         print("\nInterrupted! Saving progress...")
-        for doc in batch_results:
-            results.results[doc.filename] = doc
-        results.update_summary()
-        save_results(results, output_file)
-        save_checkpoint(checkpoint_file, checkpoint_data)
+        if use_parallel:
+            for future in list(pending_futures):
+                if future.done():
+                    metadata = future_to_metadata.pop(future, None)
+                    if metadata is None:
+                        pending_futures.remove(future)
+                        continue
+                    try:
+                        doc_result = future.result()
+                    except Exception as exc:
+                        print(f"  Error processing {metadata['document_id']}: {exc}")
+                        doc_result = None
+                    handle_completed(metadata, doc_result)
+                    pending_futures.remove(future)
+
+            if executor:
+                executor.shutdown(wait=False, cancel_futures=True)
+                executor = None
+
+            pending_futures.clear()
+            future_to_metadata.clear()
+
+        flush_batch()
         print("Progress saved. Use --resume to continue.")
         sys.exit(1)
+
+    finally:
+        if executor:
+            executor.shutdown(wait=True)
+
+    flush_batch()
+
+    if processed_count == 0:
+        print("No new documents processed (all matched checkpoint or dataset was empty).")
+        return
 
     print("\n" + "="*60)
     print("PROCESSING COMPLETE")
     print("="*60)
-    print(f"Total files processed: {results.summary.get('total_files', 0)}")
-    print(f"Files with funding: {results.summary.get('files_with_funding', 0)}")
+    print(f"Total documents processed: {results.summary.get('total_files', 0)}")
+    print(f"Documents with funding: {results.summary.get('files_with_funding', 0)}")
     print(f"Total statements: {results.summary.get('total_statements', 0)}")
     if not args.skip_structured:
         print(f"Total funders: {results.summary.get('total_funders', 0)}")
@@ -342,6 +570,5 @@ def main():
 
 
 if __name__ == '__main__':
-    import multiprocessing
     multiprocessing.set_start_method('spawn', force=True)
     main()

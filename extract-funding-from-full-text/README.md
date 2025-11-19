@@ -18,6 +18,13 @@ python funding_extractor.py -i document.md -o results.json
 # Process a directory of markdown files
 python funding_extractor.py -i /path/to/documents -o results.json
 
+# Stream a directory of parquet chunks (text column auto-detects, prefers "markdown")
+python funding_extractor.py -i /path/to/parquet-chunks --input-format parquet \
+  --parquet-text-column markdown --parquet-id-column source_id -o results.json
+
+# Rehydrate parquet rows back into markdown snippets for inspection
+python parquet_to_markdown.py -i /path/to/parquet-chunks -o tmp_markdown/ --limit 20
+
 # Use a specific LLM provider
 python funding_extractor.py -i docs/ -o results.json --provider gemini --api-key YOUR_KEY
 ```
@@ -65,7 +72,7 @@ python funding_extractor.py -i docs/ -o results.json --skip-structured
 ## Command-Line Options
 
 ### Required Arguments
-- `-i, --input` - Input markdown file or directory
+- `-i, --input` - Input markdown file, directory, or parquet dataset
 - `-o, --output` - Output JSON file (default: funding_results.json)
 
 ### Configuration Options
@@ -77,6 +84,7 @@ python funding_extractor.py -i docs/ -o results.json --skip-structured
 
 ### Processing Options
 - `--normalize` - Enable text normalization
+- `--heal-markdown` - Attempt to reflow converted markdown before parsing
 - `--skip-extraction` - Skip funding statement extraction
 - `--skip-structured` - Skip structured funding entity extraction
 - `--batch-size` - Documents per batch (default: 10)
@@ -92,6 +100,12 @@ python funding_extractor.py -i docs/ -o results.json --skip-structured
 - `--colbert-model` - ColBERT model (default: [lightonai/GTE-ModernColBERT-v1](https://huggingface.co/lightonai/GTE-ModernColBERT-v1))
 - `--threshold` - Minimum relevance score (default: 28.0)
 - `--top-k` - Top paragraphs per query (default: 5)
+
+### Input Source Options
+- `--input-format` - Force auto-detection between markdown and parquet inputs
+- `--parquet-text-column` - Column containing markdown text (default: auto-detect, preferring `markdown`)
+- `--parquet-id-column` - Optional identifier column for parquet rows (auto-detects common names)
+- `--parquet-batch-size` - Batch size when streaming parquet rows (default: 64)
 
 ### Checkpoint Options
 - `--checkpoint-file` - Custom checkpoint file path
@@ -236,6 +250,3 @@ This tool processes markdown files as input. When converting PDF documents to ma
   processor = AutoProcessor.from_pretrained("DotsOCR", trust_remote_code=True)
   # Process images with model to extract text/layout
   ```
-
-
-
