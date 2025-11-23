@@ -1,3 +1,5 @@
+"""Utilities to repair PDF-derived markdown before extraction."""
+
 import re
 from typing import List, Optional, Tuple
 

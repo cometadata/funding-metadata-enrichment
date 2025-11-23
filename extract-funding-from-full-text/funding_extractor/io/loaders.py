@@ -1,9 +1,22 @@
+"""Input handling for markdown and parquet sources."""
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from utils import find_markdown_files
+from funding_extractor.exceptions import DocumentLoadError
+
+
+def find_markdown_files(directory: str) -> List[str]:
+    md_files: List[str] = []
+    path = Path(directory)
+    if not path.exists():
+        raise DocumentLoadError(f"Directory {directory} does not exist")
+
+    for file_path in path.rglob("*.md"):
+        md_files.append(str(file_path))
+    return sorted(md_files)
 
 
 @dataclass
@@ -17,8 +30,8 @@ class DocumentPayload:
         if self.content is not None:
             return self.content
         if self.file_path:
-            return Path(self.file_path).read_text(encoding='utf-8')
-        raise ValueError(f"No textual content available for {self.document_id}")
+            return Path(self.file_path).read_text(encoding="utf-8")
+        raise DocumentLoadError(f"No textual content available for {self.document_id}")
 
 
 def determine_input_format(input_path: Path, requested_format: Optional[str]) -> str:
@@ -26,23 +39,23 @@ def determine_input_format(input_path: Path, requested_format: Optional[str]) ->
         return requested_format
 
     if input_path.is_file():
-        return 'parquet' if input_path.suffix.lower() == '.parquet' else 'markdown'
+        return "parquet" if input_path.suffix.lower() == ".parquet" else "markdown"
 
     try:
-        next(input_path.rglob('*.md'))
-        return 'markdown'
+        next(input_path.rglob("*.md"))
+        return "markdown"
     except StopIteration:
         pass
     except PermissionError:
         pass
 
     try:
-        next(input_path.rglob('*.parquet'))
-        return 'parquet'
+        next(input_path.rglob("*.parquet"))
+        return "parquet"
     except StopIteration:
-        return 'markdown'
+        return "markdown"
     except PermissionError:
-        return 'markdown'
+        return "markdown"
 
 
 def build_markdown_documents(input_path: Path) -> List[DocumentPayload]:
@@ -58,7 +71,7 @@ def build_markdown_documents(input_path: Path) -> List[DocumentPayload]:
             DocumentPayload(
                 document_id=filename,
                 checkpoint_key=file_path,
-                file_path=file_path
+                file_path=file_path,
             )
         )
     return documents
@@ -69,7 +82,7 @@ def _resolve_column(
     requested: Optional[str],
     fallback_candidates: Optional[List[str]],
     required: bool,
-    role: str
+    role: str,
 ) -> Tuple[Optional[str], bool]:
     normalized = {name.lower(): name for name in schema_names}
     search_order: List[str] = []
@@ -87,10 +100,9 @@ def _resolve_column(
             return match, True
 
     if required:
-        available = ', '.join(schema_names)
-        raise ValueError(
-            f"Column '{requested}' not found in parquet schema for {role}. "
-            f"Available columns: {available}"
+        available = ", ".join(schema_names)
+        raise DocumentLoadError(
+            f"Column '{requested}' not found in parquet schema for {role}. Available columns: {available}"
         )
 
     return None, False
@@ -102,12 +114,12 @@ def stream_parquet_documents(
     id_column: Optional[str],
     batch_size: int,
     fallback_text_columns: Optional[List[str]] = None,
-    fallback_id_columns: Optional[List[str]] = None
+    fallback_id_columns: Optional[List[str]] = None,
 ) -> Tuple[Iterator[DocumentPayload], Optional[int]]:
     try:
         import pyarrow.dataset as ds
     except ImportError as exc:
-        raise RuntimeError(
+        raise DocumentLoadError(
             "pyarrow is required to process parquet inputs. Install it via `pip install pyarrow`."
         ) from exc
 
@@ -120,7 +132,7 @@ def stream_parquet_documents(
         requested=text_column,
         fallback_candidates=fallback_text_columns or [],
         required=True,
-        role='text content'
+        role="text content",
     )
 
     resolved_id_column, id_was_inferred = _resolve_column(
@@ -128,7 +140,7 @@ def stream_parquet_documents(
         requested=id_column,
         fallback_candidates=fallback_id_columns or [],
         required=False,
-        role='identifier'
+        role="identifier",
     )
 
     if text_was_inferred:
@@ -151,7 +163,7 @@ def stream_parquet_documents(
             schema = batch.schema
             text_idx = schema.get_field_index(resolved_text_column)
             if text_idx == -1:
-                raise ValueError(f"Column '{resolved_text_column}' not found in parquet schema")
+                raise DocumentLoadError(f"Column '{resolved_text_column}' not found in parquet schema")
 
             id_idx = schema.get_field_index(resolved_id_column) if resolved_id_column else None
 
@@ -165,7 +177,7 @@ def stream_parquet_documents(
                     continue
 
                 if isinstance(text_value, bytes):
-                    text_value = text_value.decode('utf-8', errors='ignore')
+                    text_value = text_value.decode("utf-8", errors="ignore")
 
                 text_str = str(text_value).strip()
                 if not text_str:
@@ -186,7 +198,7 @@ def stream_parquet_documents(
                 yield DocumentPayload(
                     document_id=document_id,
                     checkpoint_key=checkpoint_key,
-                    content=text_str
+                    content=text_str,
                 )
                 row_index += 1
 
