@@ -1,0 +1,26 @@
+[project]
+name = "extract-funding-from-full-text"
+version = "0.1.0"
+description = "Extract funding information from markdown documents using semantic search and LLM-based entity extraction"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-generativeai>=0.3.0",
+    "langextract>=1.0.8",
+    "ollama>=0.1.0",
+    "openai>=1.0.0",
+    "pyarrow>=12.0.0",
+    "pydantic>=2.0.0",
+    "pylate>=0.1.0",
+    "pytest>=7.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "torch>=2.0.0",
+]
+
+[project.scripts]
+extract-funding = "funding_extractor.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["funding_extractor*"]
