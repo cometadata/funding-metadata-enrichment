@@ -758,7 +758,6 @@ def validate_input_quality(text: str) -> Tuple[bool, str]:
 
 
 def detect_column(df: pd.DataFrame, candidates: List[str]) -> str | None:
-    """Detect which column name exists in the dataframe from a list of candidates."""
     columns_lower = {col.lower(): col for col in df.columns}
     for candidate in candidates:
         if candidate.lower() in columns_lower:
@@ -767,12 +766,6 @@ def detect_column(df: pd.DataFrame, candidates: List[str]) -> str | None:
 
 
 def read_parquet_input(path: Path) -> Tuple[pd.DataFrame, str, str]:
-    """
-    Read parquet file and auto-detect filename and content columns.
-
-    Returns:
-        Tuple of (dataframe, filename_column, content_column)
-    """
     df = pd.read_parquet(path)
 
     filename_candidates = ['file_name', 'filename', 'relative_path', 'name', 'path']
@@ -792,7 +785,6 @@ def read_parquet_input(path: Path) -> Tuple[pd.DataFrame, str, str]:
 
 
 def write_parquet_output(results: List[RestorationResult], output_path: Path) -> None:
-    """Write successful restoration results to parquet file."""
     records = []
     for result in results:
         if result.success:
@@ -817,7 +809,6 @@ def write_parquet_output(results: List[RestorationResult], output_path: Path) ->
 
 
 def write_failed_parquet(results: List[RestorationResult], output_path: Path) -> None:
-    """Write failed restoration results to parquet file with detailed metadata."""
     records = []
     for result in results:
         if result.failure_analysis and result.failure_analysis.category != FailureCategory.SUCCESS:
@@ -860,9 +851,22 @@ def gather_markdown_paths(path: Path) -> List[Path]:
     )
 
 
+def gather_parquet_paths(path: Path) -> List[Path]:
+    if path.is_file():
+        return [path]
+    return sorted(
+        p
+        for p in path.rglob("*.parquet")
+        if p.is_file() and not any(part.startswith(".") for part in p.parts)
+    )
+
+
 def is_parquet_input(path: Path) -> bool:
-    """Check if the input path is a parquet file."""
-    return path.is_file() and path.suffix.lower() == '.parquet'
+    if path.is_file() and path.suffix.lower() == '.parquet':
+        return True
+    if path.is_dir():
+        return len(gather_parquet_paths(path)) > 0
+    return False
 
 
 def write_output(
@@ -984,7 +988,6 @@ def process_parquet_file(
     out_dir: Path | None,
     exclude_failed: bool,
 ) -> List[RestorationResult]:
-    """Process a parquet file containing multiple documents."""
     print(f"Reading parquet file: {parquet_path}")
     df, filename_col, content_col = read_parquet_input(parquet_path)
     print(f"Detected columns - filename: '{filename_col}', content: '{content_col}'")
@@ -1117,25 +1120,48 @@ def main() -> int:
             print("Error: --out-dir is required when using markdown output format with parquet input")
             return 1
 
-        results = process_parquet_file(
-            args.path,
-            options,
-            output_format,
-            out_dir,
-            args.exclude_failed,
-        )
+        parquet_files = gather_parquet_paths(args.path)
+        if not parquet_files:
+            print("No parquet files found.")
+            return 1
 
-        if output_format in ("parquet", "both") and out_dir:
-            success_output = out_dir / f"{args.path.stem}_cleaned.parquet"
-            success_output.parent.mkdir(parents=True, exist_ok=True)
-            write_parquet_output(results, success_output)
-            print(f"\nWrote cleaned parquet to: {success_output}")
+        print(f"Found {len(parquet_files)} parquet file(s) to process")
+        all_results: List[RestorationResult] = []
 
-            failed_output = args.failed_output or (out_dir / "failed.parquet")
-            failed_output.parent.mkdir(parents=True, exist_ok=True)
-            write_failed_parquet(results, failed_output)
-            if any(r.failure_analysis and r.failure_analysis.category != FailureCategory.SUCCESS for r in results):
-                print(f"Wrote failed records to: {failed_output}")
+        for parquet_path in parquet_files:
+            print(f"\n{'='*60}")
+            print(f"Processing: {parquet_path.name}")
+            print(f"{'='*60}")
+
+            parquet_out_dir = None
+            if out_dir:
+                if len(parquet_files) > 1:
+                    parquet_out_dir = out_dir / parquet_path.stem
+                else:
+                    parquet_out_dir = out_dir
+
+            results = process_parquet_file(
+                parquet_path,
+                options,
+                output_format,
+                parquet_out_dir,
+                args.exclude_failed,
+            )
+            all_results.extend(results)
+
+            if output_format in ("parquet", "both") and out_dir:
+                success_output = out_dir / f"{parquet_path.stem}_cleaned.parquet"
+                success_output.parent.mkdir(parents=True, exist_ok=True)
+                write_parquet_output(results, success_output)
+                print(f"Wrote cleaned parquet to: {success_output}")
+
+                failed_output = args.failed_output or (out_dir / f"{parquet_path.stem}_failed.parquet")
+                failed_output.parent.mkdir(parents=True, exist_ok=True)
+                write_failed_parquet(results, failed_output)
+                if any(r.failure_analysis and r.failure_analysis.category != FailureCategory.SUCCESS for r in results):
+                    print(f"Wrote failed records to: {failed_output}")
+
+        results = all_results
 
     else:
         targets = gather_markdown_paths(args.path)
