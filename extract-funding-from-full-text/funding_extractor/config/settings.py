@@ -1,5 +1,3 @@
-"""Configuration dataclasses for the funding extractor CLI."""
-
 import os
 from dataclasses import dataclass
 from pathlib import Path

@@ -1,5 +1,3 @@
-"""Normalization helpers for funding statements."""
-
 import re
 import unicodedata
 

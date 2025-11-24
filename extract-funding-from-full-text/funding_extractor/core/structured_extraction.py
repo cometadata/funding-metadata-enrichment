@@ -1,5 +1,3 @@
-"""Structured entity extraction powered by configured providers."""
-
 import os
 from typing import List, Optional
 

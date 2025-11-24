@@ -1,5 +1,3 @@
-"""Project-specific exception hierarchy."""
-
 
 class FundingExtractorError(Exception):
     """Base exception for the funding extractor package."""

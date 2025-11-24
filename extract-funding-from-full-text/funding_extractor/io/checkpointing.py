@@ -1,8 +1,7 @@
 """Checkpoint persistence utilities."""
-
-import hashlib
-import json
 import os
+import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,8 +14,6 @@ def get_file_hash(file_path: str) -> str:
 
 
 class CheckpointRepository:
-    """Repository for reading and writing checkpoint data."""
-
     def __init__(self, checkpoint_path: Path) -> None:
         self.checkpoint_path = checkpoint_path
         self.data: Dict[str, Any] = {
@@ -30,7 +27,7 @@ class CheckpointRepository:
             try:
                 with open(self.checkpoint_path, "r", encoding="utf-8") as fh:
                     self.data = json.load(fh)
-            except Exception as exc:  # pylint: disable=broad-except
+            except Exception as exc:
                 raise CheckpointError(f"Could not load checkpoint: {exc}") from exc
         return self.data
 

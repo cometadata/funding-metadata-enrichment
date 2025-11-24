@@ -1,5 +1,3 @@
-"""Semantic extraction of funding statements."""
-
 import os
 import re
 import threading
@@ -18,13 +16,11 @@ def _split_into_paragraphs(text: str) -> List[str]:
 
 
 class SemanticExtractionService:
-    """Service responsible for semantic funding statement extraction."""
-
     def __init__(self) -> None:
         self._model_cache: Dict[str, models.ColBERT] = {}
         self._model_cache_lock = threading.Lock()
 
-        self._pattern_cache: Dict[Tuple[Optional[str], Optional[str]], List[Pattern]] = {}
+        self._pattern_cache: Dict[Tuple[Optional[str], Optional[str]], Tuple[List[Pattern], List[Pattern]]] = {}
         self._pattern_cache_lock = threading.Lock()
 
         self._query_embeddings_cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Dict[str, Any]] = {}
@@ -42,18 +38,21 @@ class SemanticExtractionService:
     def _pattern_cache_key(patterns_file: Optional[str], custom_config_dir: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
         return (patterns_file or "__default__", custom_config_dir or "__default__")
 
-    def _get_compiled_patterns(self, patterns_file: Optional[str], custom_config_dir: Optional[str]) -> List[Pattern]:
+    def _get_compiled_patterns(self, patterns_file: Optional[str], custom_config_dir: Optional[str]) -> Tuple[List[Pattern], List[Pattern]]:
         key = self._pattern_cache_key(patterns_file, custom_config_dir)
         with self._pattern_cache_lock:
             cached = self._pattern_cache.get(key)
             if cached is not None:
                 return cached
 
-        patterns = load_funding_patterns(patterns_file, custom_config_dir)
-        compiled = [re.compile(pattern) for pattern in patterns]
+        patterns, negative_patterns = load_funding_patterns(patterns_file, custom_config_dir)
+        compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
+        compiled_negative = [re.compile(pattern, re.IGNORECASE) for pattern in negative_patterns]
+        
+        result = (compiled_patterns, compiled_negative)
         with self._pattern_cache_lock:
-            self._pattern_cache[key] = compiled
-        return compiled
+            self._pattern_cache[key] = result
+        return result
 
     @staticmethod
     def _query_cache_key(model_name: str, queries: Dict[str, str]) -> Tuple[str, Tuple[Tuple[str, str], ...]]:
@@ -83,12 +82,29 @@ class SemanticExtractionService:
         score: float,
         threshold: float,
         compiled_patterns: List[Pattern],
+        negative_patterns: List[Pattern],
     ) -> bool:
+        if score > 14.0:
+            return True
+
+        paragraph_lower = paragraph.lower()
+
+        for pattern in negative_patterns:
+            if re.search(pattern, paragraph_lower):
+                return False
+
+        has_regex_match = any(re.search(pattern, paragraph_lower) for pattern in compiled_patterns)
+
+        if has_regex_match:
+            # If we have a strong regex match, allow a lower threshold but not zero
+            # Lowered from 6.0 to 3.0 to improve recall
+            if score > 3.0:
+                return True
+
         if score < threshold:
             return False
 
-        paragraph_lower = paragraph.lower()
-        return any(re.search(pattern, paragraph_lower) for pattern in compiled_patterns)
+        return has_regex_match
 
     @staticmethod
     def _extract_funding_sentences(paragraph: str) -> List[str]:
@@ -96,7 +112,7 @@ class SemanticExtractionService:
         funding_sentences = []
 
         for i, sentence in enumerate(sentences):
-            if re.search(r"\b(?:acknowledg|fund|support|grant|award|project)\w*\b", sentence, re.IGNORECASE):
+            if re.search(r"\b(?:acknowledg|fund|support|grant|award|project|hospitality|facilities|scholarship|fellowship|thanks|thank)\w*\b", sentence, re.IGNORECASE):
                 sentence = sentence.strip()
                 if i + 1 < len(sentences) and sentence.endswith("No"):
                     sentence = sentence + " " + sentences[i + 1].strip()
@@ -106,7 +122,7 @@ class SemanticExtractionService:
 
     @staticmethod
     def _should_extract_full_paragraph(paragraph: str, score: float) -> bool:
-        if score > 25.0:
+        if score > 14.0:
             return True
 
         if len(paragraph) < 500:
@@ -123,6 +139,7 @@ class SemanticExtractionService:
             "foundation",
             "scholarship",
             "fellowship",
+            "thank",
         ]
 
         words = paragraph.lower().split()
@@ -206,7 +223,7 @@ class SemanticExtractionService:
         content: Optional[str] = None,
         model_name: str = "lightonai/GTE-ModernColBERT-v1",
         top_k: int = 5,
-        threshold: float = 28.0,
+        threshold: float = 10.0,
         batch_size: int = 32,
         patterns_file: Optional[str] = None,
         custom_config_dir: Optional[str] = None,
@@ -224,7 +241,7 @@ class SemanticExtractionService:
         if not paragraphs:
             return []
 
-        compiled_patterns = self._get_compiled_patterns(patterns_file, custom_config_dir)
+        compiled_patterns, negative_patterns = self._get_compiled_patterns(patterns_file, custom_config_dir)
         documents_embeddings = model.encode(paragraphs, batch_size=batch_size, is_query=False, show_progress_bar=False)
         query_embeddings_map = self._get_query_embeddings(model_name, queries, model)
 
@@ -250,7 +267,7 @@ class SemanticExtractionService:
                     score = float(result["score"])
                     paragraph = paragraphs[para_id]
 
-                    if self._is_likely_funding_statement(paragraph, score, threshold, compiled_patterns):
+                    if self._is_likely_funding_statement(paragraph, score, threshold, compiled_patterns, negative_patterns):
                         if self._should_extract_full_paragraph(paragraph, score):
                             statement_text = paragraph.strip()
                         elif len(paragraph) > 1000:
@@ -284,12 +301,11 @@ def extract_funding_statements(
     content: Optional[str] = None,
     model_name: str = "lightonai/GTE-ModernColBERT-v1",
     top_k: int = 5,
-    threshold: float = 28.0,
+    threshold: float = 10.0,
     batch_size: int = 32,
     patterns_file: Optional[str] = None,
     custom_config_dir: Optional[str] = None,
 ) -> List[FundingStatement]:
-    """Compatibility wrapper for extracting funding statements using the default service."""
     return _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
         queries=queries,
         file_path=file_path,

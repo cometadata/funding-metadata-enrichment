@@ -1,8 +1,6 @@
-"""Helpers for loading configuration files (queries, prompts, patterns)."""
-
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -70,7 +68,9 @@ def load_extraction_examples(
         return json.load(fh)
 
 
-def load_funding_patterns(patterns_file: Optional[str] = None, custom_config_dir: Optional[str] = None) -> List[str]:
+def load_funding_patterns(
+    patterns_file: Optional[str] = None, custom_config_dir: Optional[str] = None
+) -> Tuple[List[str], List[str]]:
     if patterns_file:
         config_path = Path(patterns_file)
     else:
@@ -84,4 +84,4 @@ def load_funding_patterns(patterns_file: Optional[str] = None, custom_config_dir
 
     with open(config_path, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
-        return data.get("patterns", [])
+        return data.get("patterns", []), data.get("negative_patterns", [])

@@ -1,14 +1,12 @@
-"""CLI entry point for the funding extractor."""
-
-import argparse
-import concurrent.futures
-import json
-import logging
-import multiprocessing
 import os
 import sys
-from datetime import datetime
+import json
+import argparse
+import logging
+import multiprocessing
+import concurrent.futures
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from funding_extractor.config.loader import load_queries
@@ -98,7 +96,7 @@ Examples:
         default="lightonai/GTE-ModernColBERT-v1",
         help="ColBERT model for semantic extraction (default: lightonai/GTE-ModernColBERT-v1)",
     )
-    parser.add_argument("--threshold", type=float, default=28.0, help="Minimum score threshold for relevance (default: 28.0)")
+    parser.add_argument("--threshold", type=float, default=10.0, help="Minimum score threshold for relevance (default: 10.0)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top paragraphs to analyze per query (default: 5)")
 
     parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
@@ -196,7 +194,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
     if not config.processing.skip_extraction:
         try:
             content = document.load_text()
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
             return None
 
@@ -261,7 +259,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
                     custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
                 )
                 extraction_results.append(extraction_result)
-            except Exception as exc:  # pylint: disable=broad-except
+            except Exception as exc:
                 print(f"  Warning: Entity extraction failed: {exc}")
 
         result.extraction_results = extraction_results
@@ -565,7 +563,7 @@ def main() -> None:
             queries_file=str(config.config_paths.queries_file) if config.config_paths.queries_file else None,
             custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
         )
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         print(f"Error loading queries: {exc}")
         sys.exit(1)
 

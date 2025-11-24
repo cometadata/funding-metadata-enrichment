@@ -1,7 +1,3 @@
-"""Utilities to repair PDF-derived markdown before extraction."""
-
-from __future__ import annotations
-
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -11,13 +7,9 @@ from pathlib import Path
 from typing import List, Tuple
 
 import ftfy
+import mdformat
 import pandas as pd
 from markdown_it import MarkdownIt
-
-try:  # Optional dependency in some environments.
-    import mdformat
-except ImportError:  # pragma: no cover - exercised only when mdformat is missing
-    mdformat = None
 
 
 class RecoveryConfidence(Enum):
@@ -211,7 +203,6 @@ WORD_DICT = build_word_dict()
 def split_concatenated_text(
     text: str, *, min_confidence: RecoveryConfidence = RecoveryConfidence.MEDIUM
 ) -> WordRecoveryResult:
-    """Attempt to split text with no whitespace into words."""
     issues: List[str] = []
     changes_made = 0
 
@@ -349,7 +340,6 @@ def categorize_failure(
     validation_error: str | None,
     recovery_result: WordRecoveryResult | None = None,
 ) -> FailureAnalysis:
-    """Mirror the standalone heal_markdown failure classification."""
     issues: List[str] = []
     category = FailureCategory.SUCCESS
 
@@ -900,7 +890,6 @@ def validate_input_quality(text: str) -> Tuple[bool, str]:
 
 
 def detect_column(df: pd.DataFrame, candidates: List[str]) -> str | None:
-    """Detect which column name exists in the dataframe from a list of candidates."""
     columns_lower = {col.lower(): col for col in df.columns}
     for candidate in candidates:
         if candidate.lower() in columns_lower:
@@ -909,12 +898,6 @@ def detect_column(df: pd.DataFrame, candidates: List[str]) -> str | None:
 
 
 def read_parquet_input(path: Path) -> Tuple[pd.DataFrame, str, str]:
-    """
-    Read parquet file and auto-detect filename and content columns.
-
-    Returns:
-        Tuple of (dataframe, filename_column, content_column)
-    """
     df = pd.read_parquet(path)
 
     filename_candidates = ["file_name", "filename", "relative_path", "name", "path"]
@@ -934,7 +917,6 @@ def read_parquet_input(path: Path) -> Tuple[pd.DataFrame, str, str]:
 
 
 def write_parquet_output(results: List[RestorationResult], output_path: Path) -> None:
-    """Write successful restoration results to parquet file."""
     records = []
     for result in results:
         if result.success:
@@ -961,7 +943,6 @@ def write_parquet_output(results: List[RestorationResult], output_path: Path) ->
 
 
 def write_failed_parquet(results: List[RestorationResult], output_path: Path) -> None:
-    """Write failed restoration results to parquet file with detailed metadata."""
     records = []
     for result in results:
         if result.failure_analysis and result.failure_analysis.category != FailureCategory.SUCCESS:
@@ -1009,7 +990,6 @@ def gather_parquet_paths(path: Path) -> List[Path]:
 
 
 def is_parquet_input(path: Path) -> bool:
-    """Check if the input path is a parquet file or directory containing parquet files."""
     if path.is_file() and path.suffix.lower() == ".parquet":
         return True
     if path.is_dir():
@@ -1066,12 +1046,6 @@ def write_output(
 
 
 def heal_markdown(content: str, *, options: RestorationOptions | None = None) -> str:
-    """
-    Heal markdown text produced by PDF extraction.
-
-    The implementation mirrors the standalone ``heal_markdown.py`` script so the
-    CLI and library paths share the same cleaning pipeline.
-    """
     if not content:
         return content
 
