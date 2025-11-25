@@ -41,6 +41,8 @@ class ProcessingSettings:
     heal_markdown: bool = False
     skip_extraction: bool = False
     skip_structured: bool = False
+    enable_pattern_rescue: bool = False
+    enable_post_filter: bool = False
 
 
 @dataclass

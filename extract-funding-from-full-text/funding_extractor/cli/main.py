@@ -98,6 +98,8 @@ Examples:
     )
     parser.add_argument("--threshold", type=float, default=10.0, help="Minimum score threshold for relevance (default: 10.0)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top paragraphs to analyze per query (default: 5)")
+    parser.add_argument("--enable-pattern-rescue", action="store_true", help="Enable pattern-based rescue for statements not in top-k (improves recall)")
+    parser.add_argument("--enable-post-filter", action="store_true", help="Enable post-filtering for precision recovery")
 
     parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (auto-detected if not specified)")
@@ -138,6 +140,8 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             heal_markdown=args.heal_markdown,
             skip_extraction=args.skip_extraction,
             skip_structured=args.skip_structured,
+            enable_pattern_rescue=args.enable_pattern_rescue,
+            enable_post_filter=args.enable_post_filter,
         ),
         provider=ProviderSettings(
             provider=ModelProvider(args.provider),
@@ -210,7 +214,17 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
             batch_size=config.extraction.semantic_batch_size,
             patterns_file=str(config.config_paths.patterns_file) if config.config_paths.patterns_file else None,
             custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
+            enable_pattern_rescue=config.processing.enable_pattern_rescue,
         )
+
+        # Apply post-filter if enabled
+        if config.processing.enable_post_filter and statements:
+            from funding_extractor.core.post_filter import apply_post_filter
+            statements = apply_post_filter(
+                statements,
+                high_confidence_threshold=30.0,
+                low_confidence_threshold=10.0,
+            )
 
         if not statements:
             if verbose:

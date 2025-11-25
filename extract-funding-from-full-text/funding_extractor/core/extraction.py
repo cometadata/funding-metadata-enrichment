@@ -45,10 +45,13 @@ class SemanticExtractionService:
             if cached is not None:
                 return cached
 
-        patterns, negative_patterns = load_funding_patterns(patterns_file, custom_config_dir)
-        compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
-        compiled_negative = [re.compile(pattern, re.IGNORECASE) for pattern in negative_patterns]
-        
+        patterns, negative_patterns = load_funding_patterns(
+            patterns_file, custom_config_dir)
+        compiled_patterns = [re.compile(pattern, re.IGNORECASE)
+                             for pattern in patterns]
+        compiled_negative = [re.compile(pattern, re.IGNORECASE)
+                             for pattern in negative_patterns]
+
         result = (compiled_patterns, compiled_negative)
         with self._pattern_cache_lock:
             self._pattern_cache[key] = result
@@ -70,7 +73,8 @@ class SemanticExtractionService:
 
         embeddings: Dict[str, Any] = {}
         for query_name, query_text in queries.items():
-            embeddings[query_name] = model.encode([query_text], batch_size=1, is_query=True, show_progress_bar=False)
+            embeddings[query_name] = model.encode(
+                [query_text], batch_size=1, is_query=True, show_progress_bar=False)
 
         with self._query_cache_lock:
             self._query_embeddings_cache[key] = embeddings
@@ -93,11 +97,10 @@ class SemanticExtractionService:
             if re.search(pattern, paragraph_lower):
                 return False
 
-        has_regex_match = any(re.search(pattern, paragraph_lower) for pattern in compiled_patterns)
+        has_regex_match = any(re.search(pattern, paragraph_lower)
+                              for pattern in compiled_patterns)
 
         if has_regex_match:
-            # If we have a strong regex match, allow a lower threshold but not zero
-            # Lowered from 6.0 to 3.0 to improve recall
             if score > 3.0:
                 return True
 
@@ -146,7 +149,8 @@ class SemanticExtractionService:
         if not words:
             return False
 
-        keyword_count = sum(1 for word in words if any(kw in word for kw in funding_keywords))
+        keyword_count = sum(1 for word in words if any(
+            kw in word for kw in funding_keywords))
         density = keyword_count / len(words)
 
         if density > 0.05:
@@ -233,7 +237,8 @@ class SemanticExtractionService:
 
         if content is None:
             if not file_path:
-                raise ValueError("Either file_path or content must be provided")
+                raise ValueError(
+                    "Either file_path or content must be provided")
             with open(file_path, "r", encoding="utf-8") as fh:
                 content = fh.read()
 
@@ -241,9 +246,12 @@ class SemanticExtractionService:
         if not paragraphs:
             return []
 
-        compiled_patterns, negative_patterns = self._get_compiled_patterns(patterns_file, custom_config_dir)
-        documents_embeddings = model.encode(paragraphs, batch_size=batch_size, is_query=False, show_progress_bar=False)
-        query_embeddings_map = self._get_query_embeddings(model_name, queries, model)
+        compiled_patterns, negative_patterns = self._get_compiled_patterns(
+            patterns_file, custom_config_dir)
+        documents_embeddings = model.encode(
+            paragraphs, batch_size=batch_size, is_query=False, show_progress_bar=False)
+        query_embeddings_map = self._get_query_embeddings(
+            model_name, queries, model)
 
         seen_statements = set()
         funding_statements: List[FundingStatement] = []
@@ -259,7 +267,8 @@ class SemanticExtractionService:
                 )
 
             doc_ids = list(range(len(paragraphs)))
-            reranked = rank.rerank(documents_ids=[doc_ids], queries_embeddings=query_embeddings, documents_embeddings=[documents_embeddings])
+            reranked = rank.rerank(documents_ids=[
+                                   doc_ids], queries_embeddings=query_embeddings, documents_embeddings=[documents_embeddings])
             if reranked and len(reranked) > 0:
                 top_results = reranked[0][:top_k]
                 for result in top_results:
@@ -271,9 +280,11 @@ class SemanticExtractionService:
                         if self._should_extract_full_paragraph(paragraph, score):
                             statement_text = paragraph.strip()
                         elif len(paragraph) > 1000:
-                            statement_text = self._extract_funding_from_long_paragraph(paragraph)
+                            statement_text = self._extract_funding_from_long_paragraph(
+                                paragraph)
                         else:
-                            funding_sentences = self._extract_funding_sentences(paragraph)
+                            funding_sentences = self._extract_funding_sentences(
+                                paragraph)
                             if funding_sentences:
                                 statement_text = " ".join(funding_sentences)
                             else:
@@ -291,6 +302,93 @@ class SemanticExtractionService:
 
         return funding_statements
 
+    def rescue_by_patterns(
+        self,
+        content: str,
+        existing_statements: List[FundingStatement],
+        patterns_file: Optional[str] = None,
+        custom_config_dir: Optional[str] = None,
+    ) -> List[FundingStatement]:
+        compiled_patterns, negative_patterns = self._get_compiled_patterns(
+            patterns_file, custom_config_dir
+        )
+
+        high_confidence_patterns = [
+            re.compile(p, re.IGNORECASE) for p in [
+                r'\bthis\s+(?:work|research|study|project|paper)\s+(?:was|is|has\s+been)\s+(?:supported|funded|financed)',
+                r'\bgrant\s+(?:no\.?|number|#)\s*[A-Z0-9\-]+',
+                r'\baward\s+(?:no\.?|number|#)\s*[A-Z0-9\-]+',
+                r'\bfunded\s+by\b',
+                r'\bfinanced\s+by\b',
+                r'\bsupported\s+in\s+part\s+by\b',
+                r'\bunder\s+(?:grant|contract|award)\s+(?:no\.?|number)?\s*[A-Z0-9]',
+                r'\breceived\s+(?:financial\s+)?(?:funding|support)\s+from',
+                r'\backnowledg\w*\s+(?:the\s+)?(?:financial\s+)?support\s+(?:of|from)',
+                r'\bthis\s+material\s+is\s+based\s+(?:upon|on)\s+work\s+supported',
+                r'This research used resources of',
+            ]
+        ]
+
+        paragraphs = _split_into_paragraphs(content)
+        if not paragraphs:
+            return []
+
+        existing_texts = {stmt.statement.lower().strip()
+                          for stmt in existing_statements}
+        rescued = []
+
+        for para_id, paragraph in enumerate(paragraphs):
+            para_lower = paragraph.lower()
+
+            if para_lower.strip() in existing_texts:
+                continue
+
+            if any(re.search(p, para_lower) for p in negative_patterns):
+                continue
+
+            pattern_matches = sum(
+                1 for p in high_confidence_patterns
+                if re.search(p, para_lower)
+            )
+
+            regular_pattern_match = any(
+                re.search(p, para_lower) for p in compiled_patterns
+            )
+
+            should_rescue = (
+                pattern_matches >= 2 or
+                (pattern_matches >= 1 and regular_pattern_match)
+            )
+
+            if should_rescue:
+                if len(paragraph) < 500:
+                    statement_text = paragraph.strip()
+                else:
+                    funding_sentences = self._extract_funding_sentences(
+                        paragraph)
+                    if funding_sentences:
+                        statement_text = " ".join(funding_sentences)
+                    elif len(paragraph) > 1000:
+                        statement_text = self._extract_funding_from_long_paragraph(
+                            paragraph)
+                    else:
+                        statement_text = paragraph.strip()
+
+                if len(statement_text) < 20:
+                    continue
+                if statement_text.lower().strip() in existing_texts:
+                    continue
+
+                existing_texts.add(statement_text.lower().strip())
+                rescued.append(FundingStatement(
+                    statement=statement_text,
+                    score=0.0,
+                    query="pattern_rescue",
+                    paragraph_idx=para_id,
+                ))
+
+        return rescued
+
 
 _DEFAULT_SEMANTIC_EXTRACTOR = SemanticExtractionService()
 
@@ -305,8 +403,9 @@ def extract_funding_statements(
     batch_size: int = 32,
     patterns_file: Optional[str] = None,
     custom_config_dir: Optional[str] = None,
+    enable_pattern_rescue: bool = False,
 ) -> List[FundingStatement]:
-    return _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
+    statements = _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
         queries=queries,
         file_path=file_path,
         content=content,
@@ -317,3 +416,24 @@ def extract_funding_statements(
         patterns_file=patterns_file,
         custom_config_dir=custom_config_dir,
     )
+
+    if enable_pattern_rescue and content is not None:
+        rescued = _DEFAULT_SEMANTIC_EXTRACTOR.rescue_by_patterns(
+            content=content,
+            existing_statements=statements,
+            patterns_file=patterns_file,
+            custom_config_dir=custom_config_dir,
+        )
+        statements.extend(rescued)
+    elif enable_pattern_rescue and file_path is not None:
+        with open(file_path, "r", encoding="utf-8") as fh:
+            file_content = fh.read()
+        rescued = _DEFAULT_SEMANTIC_EXTRACTOR.rescue_by_patterns(
+            content=file_content,
+            existing_statements=statements,
+            patterns_file=patterns_file,
+            custom_config_dir=custom_config_dir,
+        )
+        statements.extend(rescued)
+
+    return statements
