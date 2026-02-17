@@ -41,3 +41,8 @@ Return the result as a structured list of objects. Each object in the list shoul
   *   Create one object per unique funder identified.
   *   Aggregate all awards for a single funder into its corresponding `award_ids` list.
   *   Do not extract acknowledgements to individuals as funders.
+
+  6.  **Award Grouping:**
+  *   When a funder has multiple awards under different funding programs, include the `funding_scheme` name in the attributes of each `award_ids` extraction so they can be correctly grouped.
+  *   If two award IDs belong to the same funding program for the same funder, they should share the same `funding_scheme` attribute value.
+  *   If an award ID has no associated funding scheme, omit the `funding_scheme` attribute.
