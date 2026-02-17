@@ -17,10 +17,14 @@ dependencies = [
     "pyyaml>=6.0",
     "requests>=2.31.0",
     "torch>=2.0.0",
+    "datasets>=2.0.0",
+    "ftfy>=6.0.0",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.scripts]
 extract-funding = "funding_extractor.cli.main:main"
+benchmark-funding = "funding_extractor.benchmark.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["funding_extractor*"]
