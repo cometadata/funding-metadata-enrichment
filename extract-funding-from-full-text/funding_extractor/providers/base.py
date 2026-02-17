@@ -7,12 +7,12 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import langextract as lx
 import requests
 
-from funding_extractor.core.models import ExtractionResult, FunderEntity
+from funding_extractor.core.models import Award, ExtractionResult, FunderEntity
 from funding_extractor.exceptions import ProviderConfigurationError, ProviderNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -110,40 +110,56 @@ class BaseProvider(ABC):
 
     @staticmethod
     def _convert_extractions_to_result(extractions: List[Any], funding_statement: str) -> ExtractionResult:
-        funders_map: Dict[str, FunderEntity] = {}
+        funders_map: Dict[Optional[str], FunderEntity] = {}
+        awards_index: Dict[Tuple[Optional[str], Optional[str]], Award] = {}
 
+        def _get_or_create_award(funder_name: Optional[str], funding_scheme: Optional[str]) -> Award:
+            key = (funder_name, funding_scheme)
+            if key in awards_index:
+                return awards_index[key]
+            if funder_name not in funders_map:
+                funders_map[funder_name] = FunderEntity(funder_name=funder_name, awards=[])
+            award = Award()
+            if funding_scheme:
+                award.funding_scheme.append(funding_scheme)
+            funders_map[funder_name].awards.append(award)
+            awards_index[key] = award
+            return award
+
+        # Pass 1: Register all funder names
         for extraction in extractions:
             if extraction.extraction_class == "funder_name":
                 funder_name = extraction.extraction_text
                 if funder_name not in funders_map:
-                    funders_map[funder_name] = FunderEntity(
-                        funder_name=funder_name,
-                        funding_scheme=None,
-                        award_ids=[],
-                        award_title=None,
-                    )
+                    funders_map[funder_name] = FunderEntity(funder_name=funder_name, awards=[])
 
+        # Pass 2: Attach award_ids, funding_scheme, and award_title
         for extraction in extractions:
             attrs = extraction.attributes or {}
+            funder_name = attrs.get("funder_name")
+
             if extraction.extraction_class == "award_ids":
-                funder_name = attrs.get("funder_name")
-                if funder_name and funder_name in funders_map:
-                    funders_map[funder_name].add_award_id(extraction.extraction_text)
-                elif funder_name:
-                    funders_map[funder_name] = FunderEntity(
-                        funder_name=funder_name,
-                        funding_scheme=None,
-                        award_ids=[extraction.extraction_text],
-                        award_title=None,
-                    )
+                if funder_name is not None:
+                    scheme = attrs.get("funding_scheme")
+                    award = _get_or_create_award(funder_name, scheme)
+                    if extraction.extraction_text not in award.award_ids:
+                        award.award_ids.append(extraction.extraction_text)
+
             elif extraction.extraction_class == "funding_scheme":
-                funder_name = attrs.get("funder_name")
-                if funder_name and funder_name in funders_map:
-                    funders_map[funder_name].funding_scheme = extraction.extraction_text
+                if funder_name is not None:
+                    _get_or_create_award(funder_name, extraction.extraction_text)
+
             elif extraction.extraction_class == "award_title":
-                funder_name = attrs.get("funder_name")
-                if funder_name and funder_name in funders_map:
-                    funders_map[funder_name].award_title = extraction.extraction_text
+                if funder_name is not None:
+                    scheme = attrs.get("funding_scheme")
+                    award = _get_or_create_award(funder_name, scheme)
+                    if extraction.extraction_text not in award.award_title:
+                        award.award_title.append(extraction.extraction_text)
+
+        # Ensure every funder has at least one award
+        for funder in funders_map.values():
+            if not funder.awards:
+                funder.awards.append(Award())
 
         return ExtractionResult(statement=funding_statement, funders=list(funders_map.values()))
 
