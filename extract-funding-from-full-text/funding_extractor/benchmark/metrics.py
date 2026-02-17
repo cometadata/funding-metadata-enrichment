@@ -2,15 +2,14 @@
 """Multi-level metrics computation for benchmark evaluation."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from funding_extractor.benchmark.dataset import GoldDocument, GoldFunder
 from funding_extractor.benchmark.matching import (
     award_ids_match,
     best_match_score,
-    similarity,
 )
-from funding_extractor.core.models import Award, FunderEntity
+from funding_extractor.core.models import FunderEntity
 
 
 @dataclass

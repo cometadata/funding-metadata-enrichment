@@ -23,7 +23,7 @@ from funding_extractor.benchmark.report import (
     print_console_summary,
     save_report,
 )
-from funding_extractor.core.models import Award, FunderEntity, ProcessingResults
+from funding_extractor.core.models import FunderEntity, ProcessingResults
 
 
 def load_precomputed_predictions(predictions_path: Path) -> Dict[str, Dict[str, Any]]:
