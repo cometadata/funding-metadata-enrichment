@@ -12,15 +12,15 @@ class FundingStatement(BaseModel):
     is_problematic: bool = Field(default=False, description="Whether statement has formatting issues")
 
 
-class FunderEntity(BaseModel):
-    funder_name: str = Field(description="Name of the funding organization")
-    funding_scheme: Optional[str] = Field(default=None, description="Specific funding program or scheme")
+class Award(BaseModel):
+    funding_scheme: List[str] = Field(default_factory=list, description="Names of funding programs or schemes")
     award_ids: List[str] = Field(default_factory=list, description="List of grant/award identifiers")
-    award_title: Optional[str] = Field(default=None, description="Title of the award if provided")
+    award_title: List[str] = Field(default_factory=list, description="Titles of awards if provided")
 
-    def add_award_id(self, award_id: str) -> None:
-        if award_id not in self.award_ids:
-            self.award_ids.append(award_id)
+
+class FunderEntity(BaseModel):
+    funder_name: Optional[str] = Field(default=None, description="Name of the funding organization")
+    awards: List[Award] = Field(default_factory=list, description="List of awards from this funder")
 
 
 class ExtractionResult(BaseModel):
@@ -57,9 +57,14 @@ class DocumentResult(BaseModel):
                     "funders": [
                         {
                             "funder_name": funder.funder_name,
-                            "funding_scheme": funder.funding_scheme,
-                            "award_ids": funder.award_ids,
-                            "award_title": funder.award_title,
+                            "awards": [
+                                {
+                                    "funding_scheme": award.funding_scheme,
+                                    "award_ids": award.award_ids,
+                                    "award_title": award.award_title,
+                                }
+                                for award in funder.awards
+                            ],
                         }
                         for funder in result.funders
                     ],
@@ -103,12 +108,19 @@ class ProcessingResults(BaseModel):
         files_with_funding = sum(1 for doc in self.results.values() if doc.has_funding())
         total_statements = sum(len(doc.funding_statements) for doc in self.results.values())
         total_funders = sum(len(result.funders) for doc in self.results.values() for result in doc.extraction_results)
+        total_awards = sum(
+            len(funder.awards)
+            for doc in self.results.values()
+            for result in doc.extraction_results
+            for funder in result.funders
+        )
 
         self.summary = {
             "total_files": total_files,
             "files_with_funding": files_with_funding,
             "total_statements": total_statements,
             "total_funders": total_funders,
+            "total_awards": total_awards,
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -139,11 +151,32 @@ class ProcessingResults(BaseModel):
             for extraction_data in doc_data.get("extractions", []):
                 funders = []
                 for funder_data in extraction_data.get("funders", []):
+                    awards = []
+                    awards_data = funder_data.get("awards")
+
+                    if awards_data is not None:
+                        for award_data in awards_data:
+                            award = Award(
+                                funding_scheme=award_data.get("funding_scheme", []),
+                                award_ids=award_data.get("award_ids", []),
+                                award_title=award_data.get("award_title", []),
+                            )
+                            awards.append(award)
+                    else:
+                        # Backward compatibility: old flat format
+                        old_scheme = funder_data.get("funding_scheme")
+                        old_ids = funder_data.get("award_ids", [])
+                        old_title = funder_data.get("award_title")
+                        award = Award(
+                            funding_scheme=[old_scheme] if old_scheme else [],
+                            award_ids=old_ids if old_ids else [],
+                            award_title=[old_title] if old_title else [],
+                        )
+                        awards.append(award)
+
                     funder = FunderEntity(
-                        funder_name=funder_data["funder_name"],
-                        funding_scheme=funder_data.get("funding_scheme"),
-                        award_ids=funder_data.get("award_ids", []),
-                        award_title=funder_data.get("award_title"),
+                        funder_name=funder_data.get("funder_name"),
+                        awards=awards,
                     )
                     funders.append(funder)
 
