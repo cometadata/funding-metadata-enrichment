@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,11 +38,24 @@ def determine_input_format(input_path: Path, requested_format: Optional[str]) ->
         return requested_format
 
     if input_path.is_file():
-        return "parquet" if input_path.suffix.lower() == ".parquet" else "markdown"
+        suffix = input_path.suffix.lower()
+        if suffix == ".jsonl":
+            return "jsonl"
+        if suffix == ".parquet":
+            return "parquet"
+        return "markdown"
 
     try:
         next(input_path.rglob("*.md"))
         return "markdown"
+    except StopIteration:
+        pass
+    except PermissionError:
+        pass
+
+    try:
+        next(input_path.rglob("*.jsonl"))
+        return "jsonl"
     except StopIteration:
         pass
     except PermissionError:
@@ -184,6 +198,92 @@ def stream_parquet_documents(
 
                 if id_array is not None:
                     raw_id = id_array[i].as_py()
+                    document_id = str(raw_id) if raw_id is not None else None
+                else:
+                    document_id = None
+
+                if not document_id:
+                    base = input_path.stem if input_path.is_file() else input_path.name
+                    document_id = f"{base}-row-{row_index}"
+
+                checkpoint_key = f"{input_path}:{document_id}"
+                yield DocumentPayload(
+                    document_id=document_id,
+                    checkpoint_key=checkpoint_key,
+                    content=text_str,
+                )
+                row_index += 1
+
+    return generator(), total_rows
+
+
+def stream_jsonl_documents(
+    input_path: Path,
+    text_column: Optional[str],
+    id_column: Optional[str],
+    fallback_text_columns: Optional[List[str]] = None,
+    fallback_id_columns: Optional[List[str]] = None,
+) -> Tuple[Iterator[DocumentPayload], Optional[int]]:
+    with open(input_path, "r", encoding="utf-8") as fh:
+        first_line = fh.readline()
+    if not first_line.strip():
+        return iter([]), 0
+
+    first_obj = json.loads(first_line)
+    field_names = list(first_obj.keys())
+
+    resolved_text_column, text_was_inferred = _resolve_column(
+        schema_names=field_names,
+        requested=text_column,
+        fallback_candidates=fallback_text_columns or [],
+        required=True,
+        role="text content",
+    )
+
+    resolved_id_column, id_was_inferred = _resolve_column(
+        schema_names=field_names,
+        requested=id_column,
+        fallback_candidates=fallback_id_columns or [],
+        required=False,
+        role="identifier",
+    )
+
+    if text_was_inferred:
+        print(f"Auto-selected JSONL text field '{resolved_text_column}'. Use --text-column to override.")
+    if resolved_id_column and id_was_inferred:
+        print(f"Auto-selected JSONL id field '{resolved_id_column}'. Use --id-column to override.")
+
+    total_rows = 0
+    with open(input_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                total_rows += 1
+
+    def generator() -> Iterator[DocumentPayload]:
+        row_index = 0
+        with open(input_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+
+                obj = json.loads(line)
+
+                text_value = obj.get(resolved_text_column)
+                if text_value is None:
+                    row_index += 1
+                    continue
+
+                if isinstance(text_value, bytes):
+                    text_value = text_value.decode("utf-8", errors="ignore")
+
+                text_str = str(text_value).strip()
+                if not text_str:
+                    row_index += 1
+                    continue
+
+                if resolved_id_column is not None:
+                    raw_id = obj.get(resolved_id_column)
                     document_id = str(raw_id) if raw_id is not None else None
                 else:
                     document_id = None

@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from funding_extractor.io.loaders import determine_input_format, stream_parquet_documents
+from funding_extractor.io.loaders import determine_input_format, stream_parquet_documents, stream_jsonl_documents
 
 
 class FakeScalar:
@@ -155,3 +155,116 @@ def test_stream_parquet_documents_infers_text_column(tmp_path, monkeypatch):
     assert len(documents) == 1
     assert documents[0].document_id == 'doc1.md'
     assert documents[0].content == 'Funding round C'
+
+
+import json
+
+
+def test_determine_input_format_detects_jsonl(tmp_path):
+    jsonl_file = tmp_path / "data.jsonl"
+    jsonl_file.write_text('{"text": "hello"}\n', encoding="utf-8")
+    assert determine_input_format(jsonl_file, requested_format=None) == "jsonl"
+
+    jsonl_dir = tmp_path / "jsonl_docs"
+    jsonl_dir.mkdir()
+    (jsonl_dir / "data.jsonl").write_text('{"text": "hello"}\n', encoding="utf-8")
+    assert determine_input_format(jsonl_dir, requested_format=None) == "jsonl"
+
+
+def test_stream_jsonl_documents_basic(tmp_path):
+    rows = [
+        {"markdown": "Funding round A", "doi": "10.1234/a"},
+        {"markdown": "Funding round B", "doi": "10.1234/b"},
+    ]
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    iterator, total_rows = stream_jsonl_documents(
+        jsonl_path,
+        text_column="markdown",
+        id_column="doi",
+    )
+
+    documents = list(iterator)
+    assert total_rows == 2
+    assert len(documents) == 2
+    assert documents[0].document_id == "10.1234/a"
+    assert documents[0].content == "Funding round A"
+    assert documents[1].document_id == "10.1234/b"
+    assert documents[1].content == "Funding round B"
+    assert documents[0].checkpoint_key == f"{jsonl_path}:10.1234/a"
+
+
+def test_stream_jsonl_documents_skips_empty_rows(tmp_path):
+    rows = [
+        {"markdown": "Funding round A", "doi": "10.1234/a"},
+        {"markdown": None, "doi": "10.1234/b"},
+        {"markdown": "", "doi": "10.1234/c"},
+        {"markdown": "   ", "doi": "10.1234/d"},
+        {"markdown": "Funding round E", "doi": "10.1234/e"},
+    ]
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    iterator, total_rows = stream_jsonl_documents(
+        jsonl_path,
+        text_column="markdown",
+        id_column="doi",
+    )
+
+    documents = list(iterator)
+    assert total_rows == 5
+    assert len(documents) == 2
+    assert documents[0].document_id == "10.1234/a"
+    assert documents[1].document_id == "10.1234/e"
+
+
+def test_stream_jsonl_documents_infers_columns(tmp_path):
+    rows = [
+        {"content": "Funding round C", "file_name": "doc1.md"},
+    ]
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    iterator, total_rows = stream_jsonl_documents(
+        jsonl_path,
+        text_column=None,
+        id_column=None,
+        fallback_text_columns=["content"],
+        fallback_id_columns=["file_name"],
+    )
+
+    documents = list(iterator)
+    assert total_rows == 1
+    assert len(documents) == 1
+    assert documents[0].document_id == "doc1.md"
+    assert documents[0].content == "Funding round C"
+
+
+def test_stream_jsonl_documents_auto_generates_ids(tmp_path):
+    rows = [
+        {"markdown": "Funding round A"},
+        {"markdown": "Funding round B"},
+    ]
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    iterator, total_rows = stream_jsonl_documents(
+        jsonl_path,
+        text_column="markdown",
+        id_column=None,
+    )
+
+    documents = list(iterator)
+    assert total_rows == 2
+    assert len(documents) == 2
+    assert documents[0].document_id == "sample-row-0"
+    assert documents[1].document_id == "sample-row-1"
