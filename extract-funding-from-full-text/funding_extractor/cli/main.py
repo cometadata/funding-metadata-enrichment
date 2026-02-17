@@ -29,6 +29,7 @@ from funding_extractor.io.loaders import (
     DocumentPayload,
     build_markdown_documents,
     determine_input_format,
+    stream_jsonl_documents,
     stream_parquet_documents,
 )
 from funding_extractor.processing.markdown_healer import heal_markdown
@@ -63,13 +64,23 @@ Examples:
 
     parser.add_argument("-i", "--input", required=True, help="Input markdown file, directory, or parquet dataset")
     parser.add_argument("-o", "--output", default="funding_results.json", help="Output JSON file (default: funding_results.json)")
-    parser.add_argument("--input-format", choices=["markdown", "parquet"], help="Force the input format instead of auto-detecting")
+    parser.add_argument("--input-format", choices=["markdown", "parquet", "jsonl"], help="Force the input format instead of auto-detecting")
     parser.add_argument(
-        "--parquet-text-column",
-        help='Column containing markdown text when reading parquet datasets (default: auto-detect, preferring "markdown")',
+        "--text-column", "--parquet-text-column",
+        dest="text_column",
+        help='Column/field containing markdown text (default: auto-detect, preferring "markdown")',
     )
-    parser.add_argument("--parquet-id-column", help="Column containing a unique identifier for each parquet row")
-    parser.add_argument("--parquet-batch-size", type=int, default=64, help="Number of parquet rows to load per batch (default: 64)")
+    parser.add_argument(
+        "--id-column", "--parquet-id-column",
+        dest="id_column",
+        help="Column/field containing a unique identifier for each row",
+    )
+    parser.add_argument(
+        "--batch-size", "--parquet-batch-size",
+        dest="batch_size",
+        type=int, default=64,
+        help="Number of parquet rows to load per batch (default: 64)",
+    )
     parser.add_argument("-q", "--queries", help="YAML file containing search queries (uses defaults if not provided)")
     parser.add_argument("--config-dir", help="Custom directory containing configuration files")
     parser.add_argument("--patterns-file", help="YAML file containing funding detection patterns")
@@ -101,7 +112,7 @@ Examples:
     parser.add_argument("--enable-pattern-rescue", action="store_true", help="Enable pattern-based rescue for statements not in top-k (improves recall)")
     parser.add_argument("--enable-post-filter", action="store_true", help="Enable post-filtering for precision recovery")
 
-    parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
+    parser.add_argument("--processing-batch-size", dest="processing_batch_size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (auto-detected if not specified)")
     parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds for LLM requests (default: 60)")
 
@@ -124,9 +135,9 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
         input=InputSettings(
             path=input_path,
             input_format=args.input_format,
-            parquet_text_column=args.parquet_text_column,
-            parquet_id_column=args.parquet_id_column,
-            parquet_batch_size=args.parquet_batch_size,
+            text_column=args.text_column,
+            id_column=args.id_column,
+            batch_size=args.batch_size,
         ),
         output=OutputSettings(output_path=output_path, checkpoint_path=checkpoint_path),
         extraction=ExtractionSettings(
@@ -153,7 +164,7 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             debug=getattr(args, "debug", False),
         ),
         runtime=RuntimeSettings(
-            batch_size=args.batch_size,
+            batch_size=args.processing_batch_size,
             workers=args.workers,
             resume=args.resume,
             force=args.force,
@@ -311,13 +322,13 @@ class FundingExtractorApp:
         total_documents: Optional[int] = None
 
         if input_format == "parquet":
-            text_fallbacks = [] if cfg.input.parquet_text_column else ["markdown", "content", "text", "body"]
-            id_fallbacks = [] if cfg.input.parquet_id_column else ["source_id", "doc_id", "document_id", "id", "file_name", "filename"]
+            text_fallbacks = [] if cfg.input.text_column else ["markdown", "content", "text", "body"]
+            id_fallbacks = [] if cfg.input.id_column else ["source_id", "doc_id", "document_id", "id", "file_name", "filename"]
             parquet_iterable, discovered_documents = stream_parquet_documents(
                 input_path=cfg.input.path,
-                text_column=cfg.input.parquet_text_column,
-                id_column=cfg.input.parquet_id_column,
-                batch_size=cfg.input.parquet_batch_size,
+                text_column=cfg.input.text_column,
+                id_column=cfg.input.id_column,
+                batch_size=cfg.input.batch_size,
                 fallback_text_columns=text_fallbacks,
                 fallback_id_columns=id_fallbacks,
             )
@@ -341,6 +352,38 @@ class FundingExtractorApp:
                 total_documents = max(discovered_documents - len(processed_lookup), 0)
             else:
                 total_documents = discovered_documents
+
+        elif input_format == "jsonl":
+            text_fallbacks = [] if cfg.input.text_column else ["markdown", "content", "text", "body"]
+            id_fallbacks = [] if cfg.input.id_column else ["source_id", "doc_id", "document_id", "id", "file_name", "filename"]
+            jsonl_iterable, discovered_documents = stream_jsonl_documents(
+                input_path=cfg.input.path,
+                text_column=cfg.input.text_column,
+                id_column=cfg.input.id_column,
+                fallback_text_columns=text_fallbacks,
+                fallback_id_columns=id_fallbacks,
+            )
+            if discovered_documents == 0:
+                print("No JSONL rows found to process")
+                return
+
+            if discovered_documents is not None:
+                print(f"Discovered {discovered_documents} JSONL rows to process")
+            else:
+                print("Scanning JSONL dataset for funding statements...")
+
+            def jsonl_iterator() -> Iterator[Tuple[DocumentPayload, str]]:
+                for doc in jsonl_iterable:
+                    doc_hash = get_file_hash(doc.checkpoint_key)
+                    if cfg.runtime.force or doc_hash not in processed_lookup:
+                        yield doc, doc_hash
+
+            documents_iter = jsonl_iterator()
+            if discovered_documents is not None and not cfg.runtime.force:
+                total_documents = max(discovered_documents - len(processed_lookup), 0)
+            else:
+                total_documents = discovered_documents
+
         else:
             markdown_docs = build_markdown_documents(cfg.input.path)
             if not markdown_docs:

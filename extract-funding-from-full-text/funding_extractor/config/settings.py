@@ -16,9 +16,9 @@ from funding_extractor.providers.base import (
 class InputSettings:
     path: Path
     input_format: Optional[str] = None
-    parquet_text_column: Optional[str] = None
-    parquet_id_column: Optional[str] = None
-    parquet_batch_size: int = 64
+    text_column: Optional[str] = None
+    id_column: Optional[str] = None
+    batch_size: int = 64
 
 
 @dataclass
@@ -88,8 +88,8 @@ class ApplicationConfig:
         if not self.input.path.exists():
             raise ConfigurationError(f"Input path {self.input.path} does not exist.")
 
-        if self.input.input_format and self.input.input_format not in {"markdown", "parquet"}:
-            raise ConfigurationError("input_format must be one of: markdown, parquet.")
+        if self.input.input_format and self.input.input_format not in {"markdown", "parquet", "jsonl"}:
+            raise ConfigurationError("input_format must be one of: markdown, parquet, jsonl.")
 
         if self.extraction.top_k < 1:
             raise ConfigurationError("top_k must be at least 1.")
