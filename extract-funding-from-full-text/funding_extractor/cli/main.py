@@ -412,7 +412,7 @@ class FundingExtractorApp:
 
         def apply_document_result(doc: DocumentResult) -> None:
             summary = results.summary or {}
-            for key in ("total_files", "files_with_funding", "total_statements", "total_funders"):
+            for key in ("total_files", "files_with_funding", "total_statements", "total_funders", "total_awards"):
                 summary.setdefault(key, 0)
 
             existing = results.results.get(doc.filename)
@@ -420,6 +420,8 @@ class FundingExtractorApp:
                 summary["total_statements"] -= len(existing.funding_statements)
                 existing_funders = sum(len(res.funders) for res in existing.extraction_results)
                 summary["total_funders"] -= existing_funders
+                existing_awards = sum(len(funder.awards) for res in existing.extraction_results for funder in res.funders)
+                summary["total_awards"] -= existing_awards
                 if existing.has_funding():
                     summary["files_with_funding"] -= 1
             else:
@@ -428,6 +430,8 @@ class FundingExtractorApp:
             summary["total_statements"] += len(doc.funding_statements)
             new_funders = sum(len(res.funders) for res in doc.extraction_results)
             summary["total_funders"] += new_funders
+            new_awards = sum(len(funder.awards) for res in doc.extraction_results for funder in res.funders)
+            summary["total_awards"] += new_awards
             if doc.has_funding():
                 summary["files_with_funding"] += 1
 
@@ -558,6 +562,7 @@ class FundingExtractorApp:
         print(f"Total statements: {results.summary.get('total_statements', 0)}")
         if not cfg.processing.skip_structured:
             print(f"Total funders: {results.summary.get('total_funders', 0)}")
+            print(f"Total awards: {results.summary.get('total_awards', 0)}")
         print(f"\nResults saved to: {cfg.output.output_path}")
 
 
