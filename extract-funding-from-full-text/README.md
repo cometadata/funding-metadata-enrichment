@@ -5,21 +5,58 @@ Python utility for extracting and structuring funding information from markdown 
 
 ## Installation
 
+### Using uv (recommended)
 ```bash
-pip install -r requirements.txt
+# Clone the repository
+git clone https://github.com/yourusername/extract-funding-from-full-text.git
+cd extract-funding-from-full-text
+
+# Create and activate virtual environment
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install in editable mode with uv
+uv pip install -e .
 ```
+
+### Using pip
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/extract-funding-from-full-text.git
+cd extract-funding-from-full-text
+
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install in editable mode
+pip install -e .
+```
+
+This will install the `extract-funding` command-line tool and all dependencies.
+
+**Note:** Make sure to activate your virtual environment before running the tool. The `extract-funding` command will be available in your PATH when the virtual environment is activated.
 
 ## Quick Start
 
 ```bash
 # Process a single markdown file with default settings
-python funding_extractor.py -i document.md -o results.json
+extract-funding -i document.md -o results.json
 
 # Process a directory of markdown files
-python funding_extractor.py -i /path/to/documents -o results.json
+extract-funding -i /path/to/documents -o results.json
+
+# Stream a directory of parquet chunks (text column auto-detects, prefers "markdown")
+extract-funding -i /path/to/parquet-chunks --input-format parquet \
+  --parquet-text-column markdown --parquet-id-column source_id -o results.json
 
 # Use a specific LLM provider
-python funding_extractor.py -i docs/ -o results.json --provider gemini --api-key YOUR_KEY
+extract-funding -i docs/ -o results.json --provider gemini --api-key YOUR_KEY
+```
+
+Alternatively, you can run the module directly:
+```bash
+python -m funding_extractor -i document.md -o results.json
 ```
 
 ## Configuration
@@ -42,30 +79,30 @@ Custom queries and prompts can be configured via the arguments.
 
 ### Basic Extraction
 ```bash
-python funding_extractor.py -i paper.md -o funding.json
+extract-funding -i paper.md -o funding.json
 ```
 
 ### With Text Normalization
 ```bash
-python funding_extractor.py -i docs/ -o results.json --normalize
+extract-funding -i docs/ -o results.json --normalize
 ```
 
 ### Using Ollama
 ```bash
-python funding_extractor.py -i docs/ -o results.json \
+extract-funding -i docs/ -o results.json \
   --provider ollama --model llama3.2 \
   --model-url http://localhost:11434
 ```
 
 ### Skip Structured Extraction
 ```bash
-python funding_extractor.py -i docs/ -o results.json --skip-structured
+extract-funding -i docs/ -o results.json --skip-structured
 ```
 
 ## Command-Line Options
 
 ### Required Arguments
-- `-i, --input` - Input markdown file or directory
+- `-i, --input` - Input markdown file, directory, or parquet dataset
 - `-o, --output` - Output JSON file (default: funding_results.json)
 
 ### Configuration Options
@@ -77,6 +114,7 @@ python funding_extractor.py -i docs/ -o results.json --skip-structured
 
 ### Processing Options
 - `--normalize` - Enable text normalization
+- `--heal-markdown` - Attempt to reflow converted markdown before parsing
 - `--skip-extraction` - Skip funding statement extraction
 - `--skip-structured` - Skip structured funding entity extraction
 - `--batch-size` - Documents per batch (default: 10)
@@ -92,6 +130,12 @@ python funding_extractor.py -i docs/ -o results.json --skip-structured
 - `--colbert-model` - ColBERT model (default: [lightonai/GTE-ModernColBERT-v1](https://huggingface.co/lightonai/GTE-ModernColBERT-v1))
 - `--threshold` - Minimum relevance score (default: 28.0)
 - `--top-k` - Top paragraphs per query (default: 5)
+
+### Input Source Options
+- `--input-format` - Force auto-detection between markdown and parquet inputs
+- `--parquet-text-column` - Column containing markdown text (default: auto-detect, preferring `markdown`)
+- `--parquet-id-column` - Optional identifier column for parquet rows (auto-detects common names)
+- `--parquet-batch-size` - Batch size when streaming parquet rows (default: 64)
 
 ### Checkpoint Options
 - `--checkpoint-file` - Custom checkpoint file path
@@ -164,13 +208,13 @@ The tool generates a JSON file with the following structure:
 ### Gemini
 ```bash
 export GEMINI_API_KEY=your_api_key
-python funding_extractor.py -i docs/ -o results.json --provider gemini
+extract-funding -i docs/ -o results.json --provider gemini
 ```
 
 ### OpenAI
 ```bash
 export OPENAI_API_KEY=your_api_key
-python funding_extractor.py -i docs/ -o results.json --provider openai --model gpt-4o-mini
+extract-funding -i docs/ -o results.json --provider openai --model gpt-4o-mini
 ```
 
 ### Ollama
@@ -182,12 +226,12 @@ ollama serve
 ollama pull llama3.2
 
 # Run extraction
-python funding_extractor.py -i docs/ -o results.json --provider ollama --model llama3.2
+extract-funding -i docs/ -o results.json --provider ollama --model llama3.2
 ```
 
 ### Local OpenAI-Compatible Server
 ```bash
-python funding_extractor.py -i docs/ -o results.json \
+extract-funding -i docs/ -o results.json \
   --provider local_openai \
   --model-url http://localhost:8000 \
   --model your-model-name
@@ -236,6 +280,3 @@ This tool processes markdown files as input. When converting PDF documents to ma
   processor = AutoProcessor.from_pretrained("DotsOCR", trust_remote_code=True)
   # Process images with model to extract text/layout
   ```
-
-
-

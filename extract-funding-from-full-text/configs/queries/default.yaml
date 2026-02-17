@@ -51,3 +51,8 @@ queries:
   block_grant: "block grant core funding institutional award unrestricted funds"
   targeted_funding: "targeted funding specific purpose designated funds earmarked support"
   matching_funds: "matching funds cost-share in-kind contribution leveraged funding"
+
+  # Edge cases and non-standard acknowledgements
+  hospitality: "hospitality acknowledgement facilities provided by hosting institution"
+  resources: "computing resources facilities equipment access technical support"
+  scholarship_fellowship: "scholarship fellowship stipend doctoral support postdoctoral funding"
