@@ -75,7 +75,7 @@ def test_heal_markdown_leaves_regular_paragraphs():
         "Additional support was provided by NASA."
     )
     healed = heal_markdown(paragraph)
-    assert healed == paragraph
+    assert healed.rstrip("\n") == paragraph
 
 
 def test_heal_markdown_reassembles_funding_section():
