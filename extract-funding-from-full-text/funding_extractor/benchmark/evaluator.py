@@ -86,6 +86,7 @@ def run_benchmark(
     split: str = "test",
     max_samples: Optional[int] = None,
     predictions_path: Optional[Path] = None,
+    predictions: Optional[Dict[str, Dict[str, Any]]] = None,
     threshold: float = 0.8,
     funder_threshold: float = 0.8,
     id_match_mode: str = "normalized",
@@ -96,7 +97,9 @@ def run_benchmark(
     gold_documents = load_hf_dataset(dataset_id, split, max_samples)
     gold_lookup = build_gold_lookup(gold_documents)
 
-    if predictions_path:
+    if predictions is not None:
+        mode = "precomputed"
+    elif predictions_path:
         predictions = load_precomputed_predictions(predictions_path)
         mode = "precomputed"
     else:

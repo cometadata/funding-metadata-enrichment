@@ -36,6 +36,11 @@ Examples:
         help="Path to pre-computed results JSON from the extractor",
     )
     mode_group.add_argument(
+        "--statements-predictions",
+        type=Path,
+        help="Path to stage 1 JSONL output (evaluate statement extraction only)",
+    )
+    mode_group.add_argument(
         "--live",
         action="store_true",
         help="Run full extraction pipeline against HF dataset (not yet implemented)",
@@ -93,6 +98,33 @@ Examples:
 
 def main() -> None:
     args = parse_args()
+
+    if args.statements_predictions:
+        from funding_extractor.statements.io import read_statements_jsonl
+        from collections import defaultdict
+
+        grouped = defaultdict(list)
+        for record in read_statements_jsonl(args.statements_predictions):
+            grouped[record["document_id"]].append(record["statement"])
+
+        predictions = {
+            doc_id: {"statements": stmts, "funders": []}
+            for doc_id, stmts in grouped.items()
+        }
+
+        run_benchmark(
+            dataset_id=args.dataset,
+            split=args.split,
+            max_samples=args.max_samples,
+            predictions=predictions,
+            threshold=args.threshold,
+            funder_threshold=args.funder_threshold,
+            id_match_mode=args.id_match_mode,
+            output_json=args.output_json,
+            verbose=args.verbose,
+            quiet=args.quiet,
+        )
+        return
 
     if args.live:
         print("Error: --live mode is not yet implemented. Use --predictions with a pre-computed results file.")
