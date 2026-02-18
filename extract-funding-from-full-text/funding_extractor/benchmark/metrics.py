@@ -2,12 +2,13 @@
 """Multi-level metrics computation for benchmark evaluation."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 
 from funding_extractor.benchmark.dataset import GoldDocument, GoldFunder
 from funding_extractor.benchmark.matching import (
-    award_ids_match,
-    best_match_score,
+    greedy_match,
+    greedy_match_ids,
+    similarity,
 )
 from funding_extractor.core.models import FunderEntity
 
@@ -83,77 +84,183 @@ def compute_level_metrics(
 ) -> LevelMetrics:
     gold_count = len(gold_items)
     pred_count = len(pred_items)
-    gold_matched = 0
-    pred_matched = 0
 
     if use_fuzzy:
-        for g in gold_items:
-            if best_match_score(g, pred_items) >= threshold:
-                gold_matched += 1
-        for p in pred_items:
-            if best_match_score(p, gold_items) >= threshold:
-                pred_matched += 1
+        matched_pairs = greedy_match(gold_items, pred_items, similarity, threshold)
     else:
-        for g in gold_items:
-            for p in pred_items:
-                if award_ids_match(p, g, mode=id_match_mode):
-                    gold_matched += 1
-                    break
-        for p in pred_items:
-            for g in gold_items:
-                if award_ids_match(p, g, mode=id_match_mode):
-                    pred_matched += 1
-                    break
+        matched_pairs = greedy_match_ids(gold_items, pred_items, id_match_mode)
 
-    return _build_level_metrics(gold_count, pred_count, gold_matched, pred_matched)
+    matched_count = len(matched_pairs)
+    return _build_level_metrics(gold_count, pred_count, matched_count, matched_count)
 
 
-def _flatten_gold_award_ids(funders: List[GoldFunder]) -> List[str]:
-    ids = []
+def _collect_awards_from_gold(funder: GoldFunder) -> Tuple[List[str], List[str], List[str]]:
+    """Extract flat lists of (award_ids, funding_schemes, award_titles) from a gold funder."""
+    ids, schemes, titles = [], [], []
+    for a in funder.awards:
+        ids.extend(a.award_ids)
+        schemes.extend(a.funding_schemes)
+        titles.extend(a.award_titles)
+    return ids, schemes, titles
+
+
+def _collect_awards_from_pred(funder: FunderEntity) -> Tuple[List[str], List[str], List[str]]:
+    """Extract flat lists of (award_ids, funding_scheme, award_title) from a pred funder."""
+    ids, schemes, titles = [], [], []
+    for a in funder.awards:
+        ids.extend(a.award_ids)
+        schemes.extend(a.funding_scheme)
+        titles.extend(a.award_title)
+    return ids, schemes, titles
+
+
+def _merge_gold_funders(funders: List[GoldFunder], threshold: float) -> List[GoldFunder]:
+    """Merge gold funders with similar names, combining their awards."""
+    from funding_extractor.benchmark.dataset import GoldAward
+    groups: List[Tuple[str, List[GoldAward]]] = []
+    unnamed_awards: List[GoldAward] = []
+
     for f in funders:
-        for a in f.awards:
-            ids.extend(a.award_ids)
-    return ids
+        if not f.funder_name:
+            unnamed_awards.extend(f.awards)
+            continue
+        merged = False
+        for i, (name, awards) in enumerate(groups):
+            if similarity(f.funder_name, name) >= threshold:
+                awards.extend(f.awards)
+                merged = True
+                break
+        if not merged:
+            groups.append((f.funder_name, list(f.awards)))
+
+    result = [GoldFunder(funder_name=name, awards=awards) for name, awards in groups]
+    if unnamed_awards:
+        result.append(GoldFunder(funder_name=None, awards=unnamed_awards))
+    return result
 
 
-def _flatten_pred_award_ids(funders: List[FunderEntity]) -> List[str]:
-    ids = []
+def _merge_pred_funders(funders: List[FunderEntity], threshold: float) -> List[FunderEntity]:
+    """Merge predicted funders with similar names, combining their awards."""
+    from funding_extractor.core.models import Award
+    groups: List[Tuple[str, List[Award]]] = []
+    unnamed_awards: List[Award] = []
+
     for f in funders:
-        for a in f.awards:
-            ids.extend(a.award_ids)
-    return ids
+        if not f.funder_name:
+            unnamed_awards.extend(f.awards)
+            continue
+        merged = False
+        for i, (name, awards) in enumerate(groups):
+            if similarity(f.funder_name, name) >= threshold:
+                awards.extend(f.awards)
+                merged = True
+                break
+        if not merged:
+            groups.append((f.funder_name, list(f.awards)))
+
+    result = [FunderEntity(funder_name=name, awards=awards) for name, awards in groups]
+    if unnamed_awards:
+        result.append(FunderEntity(funder_name=None, awards=unnamed_awards))
+    return result
 
 
-def _flatten_gold_schemes(funders: List[GoldFunder]) -> List[str]:
-    schemes = []
-    for f in funders:
-        for a in f.awards:
-            schemes.extend(a.funding_schemes)
-    return schemes
+def _evaluate_per_funder(
+    gold_funders: List[GoldFunder],
+    pred_funders: List[FunderEntity],
+    funder_threshold: float,
+    threshold: float,
+    id_match_mode: str,
+) -> Tuple[LevelMetrics, LevelMetrics, LevelMetrics, LevelMetrics]:
+    """Merge funders by name, match 1-to-1, then evaluate awards within each pair.
 
+    Returns (funder_metrics, id_metrics, scheme_metrics, title_metrics).
+    """
+    # Merge funders with similar names before evaluation
+    gold_merged = _merge_gold_funders(gold_funders, funder_threshold)
+    pred_merged = _merge_pred_funders(pred_funders, funder_threshold)
 
-def _flatten_pred_schemes(funders: List[FunderEntity]) -> List[str]:
-    schemes = []
-    for f in funders:
-        for a in f.awards:
-            schemes.extend(a.funding_scheme)
-    return schemes
+    # Filter to funders with names for name-based matching
+    gold_named_indices = [i for i, f in enumerate(gold_merged) if f.funder_name]
+    pred_named_indices = [i for i, f in enumerate(pred_merged) if f.funder_name]
 
+    gold_named = [gold_merged[i].funder_name for i in gold_named_indices]
+    pred_named = [pred_merged[i].funder_name for i in pred_named_indices]
 
-def _flatten_gold_titles(funders: List[GoldFunder]) -> List[str]:
-    titles = []
-    for f in funders:
-        for a in f.awards:
-            titles.extend(a.award_titles)
-    return titles
+    funder_matches = greedy_match(gold_named, pred_named, similarity, funder_threshold)
 
+    funder_matched_count = len(funder_matches)
+    funder_metrics = _build_level_metrics(
+        len(gold_named), len(pred_named), funder_matched_count, funder_matched_count
+    )
 
-def _flatten_pred_titles(funders: List[FunderEntity]) -> List[str]:
-    titles = []
-    for f in funders:
-        for a in f.awards:
-            titles.extend(a.award_title)
-    return titles
+    # Map matched indices back to merged funder lists
+    matched_gold_set: set = set()
+    matched_pred_set: set = set()
+    paired = []
+    for gm_idx, pm_idx, _score in funder_matches:
+        gi = gold_named_indices[gm_idx]
+        pi = pred_named_indices[pm_idx]
+        paired.append((gi, pi))
+        matched_gold_set.add(gi)
+        matched_pred_set.add(pi)
+
+    # Pair unnamed funders for award-level evaluation (no funder-level credit)
+    unnamed_gold_idx = next(
+        (i for i, f in enumerate(gold_merged) if not f.funder_name), None
+    )
+    unnamed_pred_idx = next(
+        (i for i, f in enumerate(pred_merged) if not f.funder_name), None
+    )
+    if unnamed_gold_idx is not None and unnamed_pred_idx is not None:
+        paired.append((unnamed_gold_idx, unnamed_pred_idx))
+        matched_gold_set.add(unnamed_gold_idx)
+        matched_pred_set.add(unnamed_pred_idx)
+
+    # Evaluate awards within each matched funder pair
+    total_id_gold = total_id_pred = total_id_matched = 0
+    total_scheme_gold = total_scheme_pred = total_scheme_matched = 0
+    total_title_gold = total_title_pred = total_title_matched = 0
+
+    for gi, pi in paired:
+        g_ids, g_schemes, g_titles = _collect_awards_from_gold(gold_merged[gi])
+        p_ids, p_schemes, p_titles = _collect_awards_from_pred(pred_merged[pi])
+
+        id_matches = greedy_match_ids(g_ids, p_ids, id_match_mode)
+        total_id_gold += len(g_ids)
+        total_id_pred += len(p_ids)
+        total_id_matched += len(id_matches)
+
+        scheme_matches = greedy_match(g_schemes, p_schemes, similarity, threshold)
+        total_scheme_gold += len(g_schemes)
+        total_scheme_pred += len(p_schemes)
+        total_scheme_matched += len(scheme_matches)
+
+        title_matches = greedy_match(g_titles, p_titles, similarity, threshold)
+        total_title_gold += len(g_titles)
+        total_title_pred += len(p_titles)
+        total_title_matched += len(title_matches)
+
+    # Unmatched gold funders: their awards are false negatives
+    for gi in range(len(gold_merged)):
+        if gi not in matched_gold_set:
+            g_ids, g_schemes, g_titles = _collect_awards_from_gold(gold_merged[gi])
+            total_id_gold += len(g_ids)
+            total_scheme_gold += len(g_schemes)
+            total_title_gold += len(g_titles)
+
+    # Unmatched pred funders: their awards are false positives
+    for pi in range(len(pred_merged)):
+        if pi not in matched_pred_set:
+            p_ids, p_schemes, p_titles = _collect_awards_from_pred(pred_merged[pi])
+            total_id_pred += len(p_ids)
+            total_scheme_pred += len(p_schemes)
+            total_title_pred += len(p_titles)
+
+    id_metrics = _build_level_metrics(total_id_gold, total_id_pred, total_id_matched, total_id_matched)
+    scheme_metrics = _build_level_metrics(total_scheme_gold, total_scheme_pred, total_scheme_matched, total_scheme_matched)
+    title_metrics = _build_level_metrics(total_title_gold, total_title_pred, total_title_matched, total_title_matched)
+
+    return funder_metrics, id_metrics, scheme_metrics, title_metrics
 
 
 def evaluate_document(
@@ -168,25 +275,14 @@ def evaluate_document(
     gold_stmts = [gold.funding_statement] if gold.funding_statement else []
     stmt_metrics = compute_level_metrics(gold_stmts, pred_statements, threshold, use_fuzzy=True)
 
-    # Funder level: compare names (skip None funder names in gold)
-    gold_funder_names = [f.funder_name for f in gold.funders if f.funder_name]
-    pred_funder_names = [f.funder_name for f in pred_funders if f.funder_name]
-    funder_metrics = compute_level_metrics(gold_funder_names, pred_funder_names, funder_threshold, use_fuzzy=True)
-
-    # Award ID level: flatten and compare globally
-    gold_ids = _flatten_gold_award_ids(gold.funders)
-    pred_ids = _flatten_pred_award_ids(pred_funders)
-    id_metrics = compute_level_metrics(gold_ids, pred_ids, threshold=0.0, use_fuzzy=False, id_match_mode=id_match_mode)
-
-    # Funding scheme level
-    gold_schemes = _flatten_gold_schemes(gold.funders)
-    pred_schemes = _flatten_pred_schemes(pred_funders)
-    scheme_metrics = compute_level_metrics(gold_schemes, pred_schemes, threshold, use_fuzzy=True)
-
-    # Award title level
-    gold_titles = _flatten_gold_titles(gold.funders)
-    pred_titles = _flatten_pred_titles(pred_funders)
-    title_metrics = compute_level_metrics(gold_titles, pred_titles, threshold, use_fuzzy=True)
+    # Funder + award levels: per-funder evaluation
+    funder_metrics, id_metrics, scheme_metrics, title_metrics = _evaluate_per_funder(
+        gold_funders=gold.funders,
+        pred_funders=pred_funders,
+        funder_threshold=funder_threshold,
+        threshold=threshold,
+        id_match_mode=id_match_mode,
+    )
 
     return DocumentMetrics(
         doi=gold.doi,

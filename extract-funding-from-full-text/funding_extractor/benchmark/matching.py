@@ -2,7 +2,7 @@
 """Text matching utilities for benchmark evaluation."""
 
 import re
-from typing import Iterable, Optional
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import ftfy
 from rapidfuzz import fuzz
@@ -48,8 +48,54 @@ def normalize_award_id(award_id: str) -> str:
 
 def award_ids_match(pred_id: str, gold_id: str, mode: str = "normalized") -> bool:
     if mode == "exact":
-        return pred_id.strip().lower() == gold_id.strip().lower()
+        return pred_id.strip().upper() == gold_id.strip().upper()
     return normalize_award_id(pred_id) == normalize_award_id(gold_id)
+
+
+def greedy_match(
+    gold_items: List[str],
+    pred_items: List[str],
+    score_fn: Callable[[str, str], float],
+    threshold: float,
+) -> List[Tuple[int, int, float]]:
+    """Greedy 1-to-1 matching between gold and pred items.
+
+    Builds all pairwise scores, keeps those >= threshold,
+    sorts descending, and greedily assigns matches consuming
+    each side exactly once.
+
+    Returns list of (gold_index, pred_index, score) tuples.
+    """
+    pairs = []
+    for gi, g in enumerate(gold_items):
+        for pi, p in enumerate(pred_items):
+            score = score_fn(g, p)
+            if score >= threshold:
+                pairs.append((gi, pi, score))
+
+    pairs.sort(key=lambda x: x[2], reverse=True)
+
+    matched = []
+    used_gold: set = set()
+    used_pred: set = set()
+    for gi, pi, score in pairs:
+        if gi not in used_gold and pi not in used_pred:
+            matched.append((gi, pi, score))
+            used_gold.add(gi)
+            used_pred.add(pi)
+
+    return matched
+
+
+def greedy_match_ids(
+    gold_items: List[str],
+    pred_items: List[str],
+    id_match_mode: str = "normalized",
+) -> List[Tuple[int, int, float]]:
+    """Greedy 1-to-1 matching for award IDs (boolean match -> score 1.0)."""
+    def score_fn(g: str, p: str) -> float:
+        return 1.0 if award_ids_match(p, g, mode=id_match_mode) else 0.0
+    return greedy_match(gold_items, pred_items, score_fn, threshold=1.0)
 
 
 def doi_from_filename(filename: str) -> Optional[str]:

@@ -13,6 +13,7 @@ from funding_extractor.benchmark.matching import (
     normalize_award_id,
     award_ids_match,
     doi_from_filename,
+    greedy_match,
 )
 
 
@@ -75,3 +76,20 @@ def test_doi_from_filename_arxiv():
 
 def test_doi_from_filename_no_doi_pattern():
     assert doi_from_filename("random-file.md") is None
+
+
+def test_greedy_match_consumes_items():
+    """Each item can only match once."""
+    gold = ["NSF", "NIH"]
+    pred = ["NSF", "NIH", "NSF"]
+    matches = greedy_match(gold, pred, similarity, threshold=0.8)
+    assert len(matches) == 2
+    used_gold = {m[0] for m in matches}
+    used_pred = {m[1] for m in matches}
+    assert len(used_gold) == 2
+    assert len(used_pred) == 2
+
+
+def test_greedy_match_empty():
+    matches = greedy_match([], ["a"], similarity, threshold=0.8)
+    assert matches == []
