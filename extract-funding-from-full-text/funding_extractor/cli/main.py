@@ -24,7 +24,7 @@ from funding_extractor.statements.extraction import extract_funding_statements
 from funding_extractor.statements.models import FundingStatement
 from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.models import DocumentResult, ProcessingParameters, ProcessingResults
-from funding_extractor.core.structured_extraction import extract_structured_entities
+from funding_extractor.entities.extraction import extract_structured_entities
 from funding_extractor.exceptions import ConfigurationError
 from funding_extractor.io.checkpointing import CheckpointRepository, get_file_hash
 from funding_extractor.io.loaders import (
