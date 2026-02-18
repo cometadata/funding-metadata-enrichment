@@ -475,13 +475,15 @@ class FundingExtractorApp:
             worker_count = max(1, cpu_count - 1)
 
         use_parallel = worker_count > 1
+        io_bound = cfg.processing.statements_only or cfg.processing.skip_extraction
         if use_parallel:
-            print(f"Using {worker_count} worker processes")
+            mode = "worker threads" if io_bound else "worker processes"
+            print(f"Using {worker_count} {mode}")
 
         max_pending_futures = worker_count * 2 if use_parallel else 0
         pending_futures = set()
         future_to_metadata: Dict[concurrent.futures.Future, Dict[str, str]] = {}
-        executor: Optional[concurrent.futures.ProcessPoolExecutor] = None
+        executor: Optional[concurrent.futures.Executor] = None
 
         def build_document_metadata(document: DocumentPayload, doc_hash: str) -> Dict[str, str]:
             return {
@@ -576,8 +578,11 @@ class FundingExtractorApp:
 
         try:
             if use_parallel:
-                ctx = multiprocessing.get_context("spawn")
-                executor = concurrent.futures.ProcessPoolExecutor(max_workers=worker_count, mp_context=ctx)
+                if io_bound:
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+                else:
+                    ctx = multiprocessing.get_context("spawn")
+                    executor = concurrent.futures.ProcessPoolExecutor(max_workers=worker_count, mp_context=ctx)
 
             for document, doc_hash in documents_iter:
                 metadata = build_document_metadata(document, doc_hash)
