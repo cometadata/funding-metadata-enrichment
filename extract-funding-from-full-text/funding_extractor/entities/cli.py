@@ -1,9 +1,9 @@
 import argparse
-import logging
+
 import sys
 import concurrent.futures
 import os
-from collections import defaultdict
+
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,7 +16,7 @@ from funding_extractor.models import DocumentResult, ProcessingParameters, Proce
 from funding_extractor.providers.base import ModelProvider
 from funding_extractor.statements.models import FundingStatement
 
-logger = logging.getLogger(__name__)
+
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:

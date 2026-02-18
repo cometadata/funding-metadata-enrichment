@@ -172,10 +172,3 @@ class ProcessingResults(BaseModel):
             results=results,
             summary=data.get("summary", {}),
         )
-
-
-class ProcessingStats(BaseModel):
-    total_documents: int = Field(description="Total documents processed")
-    successful: int = Field(description="Successfully processed documents")
-    failed: int = Field(description="Failed documents")
-    total_entities: int = Field(description="Total entities extracted")

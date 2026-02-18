@@ -1,5 +1,5 @@
 import argparse
-import logging
+
 import os
 import sys
 import concurrent.futures
@@ -27,7 +27,7 @@ from funding_extractor.statements.io import write_statements_jsonl
 from funding_extractor.statements.models import FundingStatement
 from funding_extractor.statements.post_filter import apply_post_filter
 
-logger = logging.getLogger(__name__)
+
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:

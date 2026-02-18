@@ -1,4 +1,5 @@
 import argparse
+import copy
 import logging
 import multiprocessing
 import sys
@@ -71,15 +72,15 @@ def main_with_args(args: argparse.Namespace) -> None:
         else:
             intermediate_path = Path(str(args.output) + ".statements.jsonl")
 
-        # Override output for stage 1
-        original_output = args.output
-        args.output = str(intermediate_path)
-        statements_cli.run(args)
+        # Stage 1: statements extraction
+        stage1_args = copy.copy(args)
+        stage1_args.output = str(intermediate_path)
+        statements_cli.run(stage1_args)
 
-        # Override input for stage 2
-        args.input = str(intermediate_path)
-        args.output = original_output
-        entities_cli.run(args)
+        # Stage 2: entity extraction
+        stage2_args = copy.copy(args)
+        stage2_args.input = str(intermediate_path)
+        entities_cli.run(stage2_args)
 
     else:
         build_parser().print_help()
