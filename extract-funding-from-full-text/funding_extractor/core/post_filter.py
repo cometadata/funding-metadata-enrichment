@@ -1,7 +1,7 @@
 import re
 from typing import List, Tuple
 
-from funding_extractor.core.models import FundingStatement
+from funding_extractor.statements.models import FundingStatement
 
 
 GRANT_NUMBER_PATTERNS = [

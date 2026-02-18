@@ -2,7 +2,7 @@
 
 import langextract as lx
 
-from funding_extractor.core.models import ExtractionResult
+from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.providers.base import BaseProvider, ModelProvider
 
 

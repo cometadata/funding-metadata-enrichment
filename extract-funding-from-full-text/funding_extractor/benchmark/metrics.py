@@ -10,7 +10,7 @@ from funding_extractor.benchmark.matching import (
     greedy_match_ids,
     similarity,
 )
-from funding_extractor.core.models import FunderEntity
+from funding_extractor.entities.models import FunderEntity
 
 
 @dataclass
@@ -141,7 +141,7 @@ def _merge_gold_funders(funders: List[GoldFunder], threshold: float) -> List[Gol
 
 def _merge_pred_funders(funders: List[FunderEntity], threshold: float) -> List[FunderEntity]:
     """Merge predicted funders with similar names, combining their awards."""
-    from funding_extractor.core.models import Award
+    from funding_extractor.entities.models import Award
     groups: List[Tuple[str, List[Award]]] = []
     unnamed_awards: List[Award] = []
 

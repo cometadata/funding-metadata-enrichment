@@ -8,7 +8,7 @@ from funding_extractor.config.loader import (
     load_extraction_prompt,
 )
 from funding_extractor.config.settings import ProviderSettings
-from funding_extractor.core.models import ExtractionResult
+from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.providers.base import (
     ModelProvider,
     get_provider_config,

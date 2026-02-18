@@ -1,14 +1,8 @@
 # tests/test_models.py
 import json
-from funding_extractor.core.models import (
-    Award,
-    FunderEntity,
-    ExtractionResult,
-    DocumentResult,
-    FundingStatement,
-    ProcessingParameters,
-    ProcessingResults,
-)
+from funding_extractor.statements.models import FundingStatement
+from funding_extractor.entities.models import Award, FunderEntity, ExtractionResult
+from funding_extractor.models import DocumentResult, ProcessingParameters, ProcessingResults
 
 
 def test_award_defaults():

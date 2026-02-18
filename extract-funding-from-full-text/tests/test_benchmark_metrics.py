@@ -13,7 +13,7 @@ from funding_extractor.benchmark.metrics import (
     aggregate_metrics,
 )
 from funding_extractor.benchmark.dataset import GoldAward, GoldDocument, GoldFunder
-from funding_extractor.core.models import Award, FunderEntity
+from funding_extractor.entities.models import Award, FunderEntity
 
 
 def test_level_metrics_perfect():

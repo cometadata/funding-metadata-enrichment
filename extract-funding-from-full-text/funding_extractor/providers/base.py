@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import langextract as lx
 import requests
 
-from funding_extractor.core.models import Award, ExtractionResult, FunderEntity
+from funding_extractor.entities.models import Award, ExtractionResult, FunderEntity
 from funding_extractor.exceptions import ProviderConfigurationError, ProviderNotFoundError
 
 logger = logging.getLogger(__name__)

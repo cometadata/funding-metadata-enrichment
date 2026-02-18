@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from funding_extractor.providers.base import BaseProvider
-from funding_extractor.core.models import Award
+from funding_extractor.entities.models import Award
 
 
 def _ext(cls, text, attrs=None):

@@ -141,6 +141,7 @@ class ProcessingResults(BaseModel):
                             )
                             awards.append(award)
                     else:
+                        # Backward compatibility: old flat format
                         old_scheme = funder_data.get("funding_scheme")
                         old_ids = funder_data.get("award_ids", [])
                         old_title = funder_data.get("award_title")

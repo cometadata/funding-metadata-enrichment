@@ -7,7 +7,7 @@ from typing import Pattern
 from pylate import models, rank
 
 from funding_extractor.config.loader import load_funding_patterns
-from funding_extractor.core.models import FundingStatement
+from funding_extractor.statements.models import FundingStatement
 
 
 def _split_into_paragraphs(text: str) -> List[str]:
