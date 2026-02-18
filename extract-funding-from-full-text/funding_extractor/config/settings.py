@@ -29,7 +29,7 @@ class OutputSettings:
 
 @dataclass
 class ExtractionSettings:
-    colbert_model: str = "lightonai/GTE-ModernColBERT-v1"
+    retrieval_model: str = "lightonai/GTE-ModernColBERT-v1"
     threshold: float = 28.0
     top_k: int = 5
     semantic_batch_size: int = 32
@@ -39,8 +39,6 @@ class ExtractionSettings:
 class ProcessingSettings:
     normalize: bool = False
     heal_markdown: bool = False
-    skip_extraction: bool = False
-    skip_structured: bool = False
     statements_only: bool = False
     enable_pattern_rescue: bool = False
     enable_post_filter: bool = False
@@ -97,9 +95,6 @@ class ApplicationConfig:
             raise ConfigurationError("top_k must be at least 1.")
         if self.extraction.threshold < 0:
             raise ConfigurationError("threshold must be non-negative.")
-
-        if not self.processing.skip_structured:
-            self._apply_provider_defaults()
 
     def _apply_provider_defaults(self) -> None:
         provider_config: ProviderConfig = get_provider_config(self.provider.provider)

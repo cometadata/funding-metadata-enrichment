@@ -59,8 +59,6 @@ Examples:
   # Use an Ollama model with normalization
   %(prog)s -i docs/ -o results.json --provider ollama --model llama3.2 --normalize
 
-  # Skip structured extraction (only extract funding statements)
-  %(prog)s -i docs/ -o results.json --skip-structured
         """,
     )
 
@@ -91,8 +89,6 @@ Examples:
 
     parser.add_argument("--normalize", action="store_true", help="Normalize funding statements (fix whitespace, accents, etc.)")
     parser.add_argument("--heal-markdown", action="store_true", help="Reflow markdown converted from PDFs before parsing")
-    parser.add_argument("--skip-extraction", action="store_true", help="Skip semantic extraction (use existing results file)")
-    parser.add_argument("--skip-structured", action="store_true", help="Skip structured entity extraction (only extract statements)")
     parser.add_argument("--statements-only", action="store_true", help="Treat each input document as a pre-identified funding statement (bypass ColBERT)")
 
     parser.add_argument(
@@ -107,9 +103,9 @@ Examples:
     parser.add_argument("--reasoning-effort", choices=["none", "low", "medium", "high"], help="Reasoning effort level (for models that support it, e.g. to disable thinking)")
 
     parser.add_argument(
-        "--colbert-model",
+        "--retrieval-model",
         default="lightonai/GTE-ModernColBERT-v1",
-        help="ColBERT model for semantic extraction (default: lightonai/GTE-ModernColBERT-v1)",
+        help="Retrieval model for semantic extraction (default: lightonai/GTE-ModernColBERT-v1)",
     )
     parser.add_argument("--threshold", type=float, default=10.0, help="Minimum score threshold for relevance (default: 10.0)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top paragraphs to analyze per query (default: 5)")
@@ -145,7 +141,7 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
         ),
         output=OutputSettings(output_path=output_path, checkpoint_path=checkpoint_path),
         extraction=ExtractionSettings(
-            colbert_model=args.colbert_model,
+            retrieval_model=args.retrieval_model,
             threshold=args.threshold,
             top_k=args.top_k,
             semantic_batch_size=32,
@@ -153,8 +149,6 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
         processing=ProcessingSettings(
             normalize=args.normalize,
             heal_markdown=args.heal_markdown,
-            skip_extraction=args.skip_extraction,
-            skip_structured=args.skip_structured,
             statements_only=args.statements_only,
             enable_pattern_rescue=args.enable_pattern_rescue,
             enable_post_filter=args.enable_post_filter,
@@ -244,7 +238,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
 
         result.funding_statements = [stmt]
 
-    elif not config.processing.skip_extraction:
+    else:
         try:
             content = document.load_text()
         except Exception as exc:
@@ -257,7 +251,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
         statements = extract_funding_statements(
             content=content,
             queries=queries,
-            model_name=config.extraction.colbert_model,
+            model_name=config.extraction.retrieval_model,
             top_k=config.extraction.top_k,
             threshold=config.extraction.threshold,
             batch_size=config.extraction.semantic_batch_size,
@@ -299,7 +293,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
                 preview = stmt.statement.replace('\n', ' ')[:240]
                 print(f"    [{stmt.score:.1f}] {preview}")
 
-    if not config.processing.skip_structured and result.funding_statements:
+    if result.funding_statements:
         unique_statements = list(set(stmt.statement for stmt in result.funding_statements))
 
         extraction_results: List[ExtractionResult] = []
@@ -457,8 +451,8 @@ class FundingExtractorApp:
                 input_format=input_format,
                 normalize=cfg.processing.normalize,
                 heal_markdown=cfg.processing.heal_markdown,
-                provider=cfg.provider.provider.value if not cfg.processing.skip_structured else None,
-                model=cfg.provider.model_id if not cfg.processing.skip_structured else None,
+                provider=cfg.provider.provider.value,
+                model=cfg.provider.model_id,
                 threshold=cfg.extraction.threshold,
                 top_k=cfg.extraction.top_k,
             ),
@@ -477,7 +471,7 @@ class FundingExtractorApp:
             worker_count = max(1, cpu_count - 1)
 
         use_parallel = worker_count > 1
-        io_bound = cfg.processing.statements_only or cfg.processing.skip_extraction
+        io_bound = cfg.processing.statements_only
         if use_parallel:
             mode = "worker threads" if io_bound else "worker processes"
             print(f"Using {worker_count} {mode}")
@@ -647,9 +641,8 @@ class FundingExtractorApp:
         print(f"Total documents processed: {results.summary.get('total_files', 0)}")
         print(f"Documents with funding: {results.summary.get('files_with_funding', 0)}")
         print(f"Total statements: {results.summary.get('total_statements', 0)}")
-        if not cfg.processing.skip_structured:
-            print(f"Total funders: {results.summary.get('total_funders', 0)}")
-            print(f"Total awards: {results.summary.get('total_awards', 0)}")
+        print(f"Total funders: {results.summary.get('total_funders', 0)}")
+        print(f"Total awards: {results.summary.get('total_awards', 0)}")
         print(f"\nResults saved to: {cfg.output.output_path}")
 
 

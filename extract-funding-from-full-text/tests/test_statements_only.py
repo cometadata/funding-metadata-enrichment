@@ -20,14 +20,13 @@ from funding_extractor.config.settings import (
 from funding_extractor.io.loaders import DocumentPayload
 
 
-def _make_config(statements_only=False, skip_structured=False, normalize=False):
+def _make_config(statements_only=False, normalize=False):
     return ApplicationConfig(
         input=InputSettings(path=Path("/tmp/fake")),
         output=OutputSettings(output_path=Path("/tmp/out.json"), checkpoint_path=Path("/tmp/cp")),
         extraction=ExtractionSettings(),
         processing=ProcessingSettings(
             statements_only=statements_only,
-            skip_structured=skip_structured,
             normalize=normalize,
         ),
         provider=ProviderSettings(),
@@ -45,8 +44,12 @@ def _make_document(text, doc_id="test-doc"):
     )
 
 
-def test_statements_only_creates_single_statement():
-    config = _make_config(statements_only=True, skip_structured=True)
+@patch("funding_extractor.cli.main.extract_structured_entities")
+def test_statements_only_creates_single_statement(mock_extract):
+    from funding_extractor.entities.models import ExtractionResult
+    mock_extract.return_value = ExtractionResult(statement="mock", funders=[])
+
+    config = _make_config(statements_only=True)
     doc = _make_document("This work was funded by NIH grant R01-GM123456.")
     result = process_document_task(doc, config, queries={})
 
@@ -60,7 +63,7 @@ def test_statements_only_creates_single_statement():
 
 
 def test_statements_only_skips_empty_content():
-    config = _make_config(statements_only=True, skip_structured=True)
+    config = _make_config(statements_only=True)
     doc = _make_document("   ")
     result = process_document_task(doc, config, queries={})
 
@@ -69,12 +72,15 @@ def test_statements_only_skips_empty_content():
     assert result.extraction_results == []
 
 
-def test_statements_only_with_skip_structured():
-    """statements-only + skip-structured produces statements but no extractions."""
-    config = _make_config(statements_only=True, skip_structured=True)
+@patch("funding_extractor.cli.main.extract_structured_entities")
+def test_statements_only_produces_statements_no_extractions(mock_extract):
+    """statements-only mode produces statements and attempts extraction."""
+    from funding_extractor.entities.models import ExtractionResult
+    mock_extract.return_value = ExtractionResult(statement="mock", funders=[])
+
+    config = _make_config(statements_only=True)
     doc = _make_document("Funded by the European Research Council.")
     result = process_document_task(doc, config, queries={})
 
     assert result is not None
     assert len(result.funding_statements) == 1
-    assert result.extraction_results == []
