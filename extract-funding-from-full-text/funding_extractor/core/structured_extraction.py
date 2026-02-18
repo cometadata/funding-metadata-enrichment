@@ -48,6 +48,7 @@ def build_provider_settings(
     timeout: int,
     skip_model_validation: bool,
     debug: bool,
+    reasoning_effort: Optional[str] = None,
 ) -> ProviderSettings:
     config = get_provider_config(provider)
     resolved_model = model_id or config.default_model
@@ -73,6 +74,7 @@ def build_provider_settings(
         model_id=resolved_model,
         model_url=resolved_url,
         api_key=resolved_api_key,
+        reasoning_effort=reasoning_effort,
         timeout=timeout,
         skip_model_validation=skip_model_validation,
         debug=debug,
@@ -105,6 +107,7 @@ def extract_structured_entities(
     skip_model_validation: bool = False,
     timeout: int = 60,
     debug: bool = False,
+    reasoning_effort: Optional[str] = None,
     prompt_file: Optional[str] = None,
     examples_file: Optional[str] = None,
     custom_config_dir: Optional[str] = None,
@@ -117,6 +120,7 @@ def extract_structured_entities(
         timeout=timeout,
         skip_model_validation=skip_model_validation,
         debug=debug,
+        reasoning_effort=reasoning_effort,
     )
     service = StructuredExtractionService(
         provider_settings=settings,

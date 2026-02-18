@@ -41,6 +41,7 @@ class ProcessingSettings:
     heal_markdown: bool = False
     skip_extraction: bool = False
     skip_structured: bool = False
+    statements_only: bool = False
     enable_pattern_rescue: bool = False
     enable_post_filter: bool = False
 
@@ -52,6 +53,7 @@ class ProviderSettings:
     model_url: Optional[str] = None
     api_key: Optional[str] = None
     timeout: int = 60
+    reasoning_effort: Optional[str] = None
     skip_model_validation: bool = False
     debug: bool = False
 

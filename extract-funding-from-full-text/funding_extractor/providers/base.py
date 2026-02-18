@@ -78,12 +78,14 @@ class BaseProvider(ABC):
         api_key: Optional[str],
         timeout: int = 60,
         debug: bool = False,
+        reasoning_effort: Optional[str] = None,
     ) -> None:
         self.model_id = model_id
         self.model_url = model_url
         self.api_key = api_key
         self.timeout = timeout
         self.debug = debug
+        self.reasoning_effort = reasoning_effort
 
     @property
     @abstractmethod

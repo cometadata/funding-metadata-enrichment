@@ -1,11 +1,31 @@
 """OpenAI provider implementations."""
 
 import os
+from functools import wraps
 
 import langextract as lx
 
 from funding_extractor.core.models import ExtractionResult
 from funding_extractor.providers.base import BaseProvider, ModelProvider
+
+
+def _patch_client_for_extra_body(language_model):
+    """Wrap the OpenAI client's create method to move unsupported top-level
+    kwargs (like ``reasoning``) into ``extra_body`` so that providers such as
+    OpenRouter receive them correctly."""
+    original_create = language_model._client.chat.completions.create
+
+    @wraps(original_create)
+    def patched_create(**kwargs):
+        extra_body = kwargs.pop("extra_body", {}) or {}
+        for key in ("reasoning",):
+            if key in kwargs:
+                extra_body[key] = kwargs.pop(key)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return original_create(**kwargs)
+
+    language_model._client.chat.completions.create = patched_create
 
 
 class OpenAIProvider(BaseProvider):
@@ -36,11 +56,16 @@ class OpenAIProvider(BaseProvider):
                 os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "http://localhost:8000")
 
             openai_model_class = lx.inference.OpenAILanguageModel
-            language_model = openai_model_class(
+            model_kwargs = dict(
                 model_id=self.model_id,
                 api_key=self.api_key or "dummy-key",
                 timeout=self.timeout,
             )
+            if self.reasoning_effort:
+                model_kwargs["reasoning"] = {"effort": self.reasoning_effort}
+            language_model = openai_model_class(**model_kwargs)
+            if self.reasoning_effort:
+                _patch_client_for_extra_body(language_model)
             params["model"] = language_model
         else:
             params["language_model_type"] = lx.inference.OpenAILanguageModel

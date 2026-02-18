@@ -29,4 +29,5 @@ class ProviderFactory:
             api_key=settings.api_key,
             timeout=settings.timeout,
             debug=settings.debug,
+            reasoning_effort=settings.reasoning_effort,
         )

@@ -21,7 +21,7 @@ from funding_extractor.config.settings import (
     RuntimeSettings,
 )
 from funding_extractor.core.extraction import extract_funding_statements
-from funding_extractor.core.models import ExtractionResult, DocumentResult, ProcessingParameters, ProcessingResults
+from funding_extractor.core.models import ExtractionResult, DocumentResult, FundingStatement, ProcessingParameters, ProcessingResults
 from funding_extractor.core.structured_extraction import extract_structured_entities
 from funding_extractor.exceptions import ConfigurationError
 from funding_extractor.io.checkpointing import CheckpointRepository, get_file_hash
@@ -91,6 +91,7 @@ Examples:
     parser.add_argument("--heal-markdown", action="store_true", help="Reflow markdown converted from PDFs before parsing")
     parser.add_argument("--skip-extraction", action="store_true", help="Skip semantic extraction (use existing results file)")
     parser.add_argument("--skip-structured", action="store_true", help="Skip structured entity extraction (only extract statements)")
+    parser.add_argument("--statements-only", action="store_true", help="Treat each input document as a pre-identified funding statement (bypass ColBERT)")
 
     parser.add_argument(
         "--provider",
@@ -101,6 +102,7 @@ Examples:
     parser.add_argument("--model", help="Model ID to use (defaults to provider default)")
     parser.add_argument("--model-url", help="API endpoint URL (for ollama or local_openai)")
     parser.add_argument("--api-key", help="API key for the model provider")
+    parser.add_argument("--reasoning-effort", choices=["none", "low", "medium", "high"], help="Reasoning effort level (for models that support it, e.g. to disable thinking)")
 
     parser.add_argument(
         "--colbert-model",
@@ -151,6 +153,7 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             heal_markdown=args.heal_markdown,
             skip_extraction=args.skip_extraction,
             skip_structured=args.skip_structured,
+            statements_only=args.statements_only,
             enable_pattern_rescue=args.enable_pattern_rescue,
             enable_post_filter=args.enable_post_filter,
         ),
@@ -159,6 +162,7 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             model_id=args.model,
             model_url=args.model_url,
             api_key=args.api_key,
+            reasoning_effort=getattr(args, "reasoning_effort", None),
             timeout=args.timeout,
             skip_model_validation=args.skip_model_validation,
             debug=getattr(args, "debug", False),
@@ -206,7 +210,39 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
 
     result = DocumentResult(filename=document.document_id)
 
-    if not config.processing.skip_extraction:
+    if config.processing.statements_only:
+        try:
+            content = document.load_text()
+        except Exception as exc:
+            print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
+            return None
+
+        if config.processing.heal_markdown:
+            content = heal_markdown(content)
+
+        content = content.strip()
+        if not content:
+            result.funding_statements = []
+            result.extraction_results = []
+            return result
+
+        stmt = FundingStatement(
+            statement=content,
+            score=1.0,
+            query="statements-only",
+        )
+
+        if config.processing.normalize:
+            normalized = normalize_funding_statement(content)
+            stmt.original = content
+            stmt.statement = normalized
+
+        if is_improperly_formatted(stmt.statement):
+            stmt.is_problematic = True
+
+        result.funding_statements = [stmt]
+
+    elif not config.processing.skip_extraction:
         try:
             content = document.load_text()
         except Exception as exc:
@@ -279,6 +315,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
                     skip_model_validation=config.provider.skip_model_validation,
                     timeout=config.provider.timeout,
                     debug=config.provider.debug,
+                    reasoning_effort=config.provider.reasoning_effort,
                     prompt_file=str(config.config_paths.prompt_file) if config.config_paths.prompt_file else None,
                     examples_file=str(config.config_paths.examples_file) if config.config_paths.examples_file else None,
                     custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
