@@ -20,7 +20,7 @@ from funding_extractor.config.settings import (
     ProviderSettings,
     RuntimeSettings,
 )
-from funding_extractor.core.extraction import extract_funding_statements
+from funding_extractor.statements.extraction import extract_funding_statements
 from funding_extractor.statements.models import FundingStatement
 from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.models import DocumentResult, ProcessingParameters, ProcessingResults
@@ -268,7 +268,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
 
         # Apply post-filter if enabled
         if config.processing.enable_post_filter and statements:
-            from funding_extractor.core.post_filter import apply_post_filter
+            from funding_extractor.statements.post_filter import apply_post_filter
             statements = apply_post_filter(
                 statements,
                 high_confidence_threshold=30.0,
