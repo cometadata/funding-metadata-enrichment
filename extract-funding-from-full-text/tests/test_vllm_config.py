@@ -6,6 +6,7 @@ from funding_extractor.providers.vllm_config import (
     VLLMEngineConfig,
     VLLMLoRAConfig,
     VLLMSamplingConfig,
+    VLLMServerConfig,
     load_vllm_config,
 )
 
@@ -86,3 +87,54 @@ def test_load_config_missing_model(tmp_path):
 def test_load_config_file_not_found():
     with pytest.raises(FileNotFoundError):
         load_vllm_config("/nonexistent/config.yaml")
+
+
+def test_load_config_with_online_mode(tmp_path):
+    data = {
+        "model": "some-model",
+        "mode": "online",
+        "server": {"url": "http://localhost:8000/v1", "api_key": "test-key", "timeout": 60},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.mode == "online"
+    assert config.server.url == "http://localhost:8000/v1"
+    assert config.server.api_key == "test-key"
+    assert config.server.timeout == 60
+
+
+def test_load_config_defaults_to_offline(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.mode == "offline"
+    assert config.server.url is None
+
+
+def test_load_config_online_missing_url_raises(tmp_path):
+    data = {"model": "some-model", "mode": "online"}
+    with pytest.raises(ValueError, match="server.url"):
+        load_vllm_config(_write_config(tmp_path, data))
+
+
+def test_load_config_invalid_mode_raises(tmp_path):
+    data = {"model": "some-model", "mode": "invalid"}
+    with pytest.raises(ValueError, match="mode"):
+        load_vllm_config(_write_config(tmp_path, data))
+
+
+def test_load_config_mode_override(tmp_path):
+    data = {"model": "some-model", "server": {"url": "http://localhost:8000/v1"}}
+    config = load_vllm_config(_write_config(tmp_path, data), mode_override="online")
+    assert config.mode == "online"
+
+
+def test_load_config_server_url_override(tmp_path):
+    data = {"model": "some-model", "mode": "online", "server": {"url": "http://old:8000/v1"}}
+    config = load_vllm_config(_write_config(tmp_path, data), server_url_override="http://new:9000/v1")
+    assert config.server.url == "http://new:9000/v1"
+
+
+def test_server_config_defaults():
+    sc = VLLMServerConfig()
+    assert sc.url is None
+    assert sc.api_key is None
+    assert sc.timeout == 120

@@ -27,9 +27,11 @@ Usage (local):
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from typing import Any, Optional
 
 import torch
@@ -85,6 +87,26 @@ def parse_args() -> argparse.Namespace:
         default=0.85,
         help="vLLM GPU memory utilization fraction",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["offline", "online"],
+        default="offline",
+        help="vLLM inference mode: offline (in-process) or online (HTTP server)",
+    )
+    parser.add_argument(
+        "--lora-path",
+        help="Path to LoRA adapter",
+    )
+    parser.add_argument(
+        "--lora-name",
+        help="LoRA adapter name (for online mode server)",
+    )
+    parser.add_argument(
+        "--server-port",
+        type=int,
+        default=8000,
+        help="Port for vLLM server in online mode (default: 8000)",
+    )
     return parser.parse_args()
 
 
@@ -132,8 +154,21 @@ def load_gold_statements(
 
 def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     """Write a temporary vLLM config YAML and return the path."""
+    mode = getattr(args, "mode", "offline")
+    port = getattr(args, "server_port", 8000)
+    lora_path = getattr(args, "lora_path", None)
+    lora_name = getattr(args, "lora_name", None)
+
+    lora_path_val = f'"{lora_path}"' if lora_path else "null"
+    lora_name_val = f'"{lora_name}"' if lora_name else "null"
+
     config_content = (
         f'model: "{model_id}"\n'
+        f'mode: "{mode}"\n'
+        f"\n"
+        f"lora:\n"
+        f"  path: {lora_path_val}\n"
+        f"  name: {lora_name_val}\n"
         f"\n"
         f"engine:\n"
         f"  tensor_parallel_size: 1\n"
@@ -142,17 +177,75 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f'  dtype: "auto"\n'
         f"  enable_prefix_caching: true\n"
         f"\n"
+        f"server:\n"
+        f'  url: "http://localhost:{port}/v1"\n'
+        f"  timeout: 120\n"
+        f"\n"
         f"sampling:\n"
         f"  temperature: 0.1\n"
         f"  max_tokens: 2048\n"
     )
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    )
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)
     tmp.flush()
     tmp.close()
     return tmp.name
+
+
+def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Popen:
+    """Start vLLM server as a background process and wait for readiness."""
+    port = getattr(args, "server_port", 8000)
+    lora_path = getattr(args, "lora_path", None)
+    lora_name = getattr(args, "lora_name", None)
+
+    cmd = [
+        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+        "--model", model_id,
+        "--port", str(port),
+        "--max-model-len", str(args.max_model_len),
+        "--gpu-memory-utilization", str(args.gpu_memory_utilization),
+        "--dtype", "auto",
+    ]
+    if lora_path:
+        adapter_name = lora_name or "default"
+        cmd.extend([
+            "--enable-lora",
+            "--lora-modules", f"{adapter_name}={lora_path}",
+        ])
+
+    logger.info("Starting vLLM server: %s", " ".join(cmd))
+    proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+
+    health_url = f"http://localhost:{port}/health"
+    max_wait = 300
+    poll_interval = 5
+    waited = 0
+    while waited < max_wait:
+        try:
+            urllib.request.urlopen(health_url, timeout=2)
+            logger.info("vLLM server ready on port %d", port)
+            return proc
+        except Exception:
+            if proc.poll() is not None:
+                raise RuntimeError(f"vLLM server exited with code {proc.returncode}")
+            time.sleep(poll_interval)
+            waited += poll_interval
+
+    proc.terminate()
+    raise RuntimeError(f"vLLM server not ready after {max_wait}s")
+
+
+def stop_vllm_server(proc: subprocess.Popen) -> None:
+    """Gracefully stop the vLLM server process."""
+    if proc.poll() is None:
+        logger.info("Shutting down vLLM server (PID %d)", proc.pid)
+        proc.terminate()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            logger.warning("Force-killing vLLM server")
+            proc.kill()
+            proc.wait()
 
 
 def run_stage2(
@@ -261,15 +354,21 @@ def main() -> None:
         max_samples=args.max_samples,
     )
 
-    logger.info("=== Stage 2: vLLM Entity Extraction ===")
+    mode = args.mode
+    logger.info("=== Stage 2: vLLM Entity Extraction (mode=%s) ===", mode)
     vllm_config_path = write_vllm_config(args.model_id, args)
+    server_proc = None
     try:
+        if mode == "online":
+            server_proc = start_vllm_server(args.model_id, args)
         results = run_stage2(
             statements_by_split=statements,
             model_id=args.model_id,
             vllm_config_path=vllm_config_path,
         )
     finally:
+        if server_proc is not None:
+            stop_vllm_server(server_proc)
         os.unlink(vllm_config_path)
 
     for split, split_results in results.items():

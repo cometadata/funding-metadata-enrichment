@@ -107,12 +107,35 @@ class VLLMProvider(BaseProvider):
             raise ProviderConfigurationError(
                 "--vllm-config is required when using --provider vllm."
             )
+        mode_override = "online" if model_url else None
+        server_url_override = model_url if model_url else None
         self._vllm_config = load_vllm_config(
             vllm_config_path,
             model_override=model_id,
             lora_path_override=lora_path,
+            mode_override=mode_override,
+            server_url_override=server_url_override,
         )
-        self._language_model = VLLMLanguageModel(self._vllm_config)
+        if self._vllm_config.mode == "online":
+            self._language_model = self._build_online_model()
+        else:
+            self._language_model = VLLMLanguageModel(self._vllm_config)
+
+    def _build_online_model(self):
+        from langextract.providers.openai import OpenAILanguageModel
+
+        model_id = self._vllm_config.lora.name or self._vllm_config.model
+        api_key = self._vllm_config.server.api_key or self.api_key or "dummy-key"
+
+        logger.info("vLLM online mode: server=%s model=%s", self._vllm_config.server.url, model_id)
+
+        return OpenAILanguageModel(
+            model_id=model_id,
+            api_key=api_key,
+            base_url=self._vllm_config.server.url,
+            temperature=self._vllm_config.sampling.temperature,
+            max_workers=1,
+        )
 
     @property
     def provider(self) -> ModelProvider:
@@ -130,4 +153,5 @@ class VLLMProvider(BaseProvider):
             "fence_output": True,
             "use_schema_constraints": False,
             "model": self._language_model,
+            "resolver_params": {"suppress_parse_errors": True},
         }

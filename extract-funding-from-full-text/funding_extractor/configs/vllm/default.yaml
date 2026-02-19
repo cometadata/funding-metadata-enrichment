@@ -1,4 +1,5 @@
 model: "meta-llama/Llama-3.1-8B-Instruct"
+mode: "offline"
 
 lora:
   path: null
@@ -13,6 +14,11 @@ engine:
   dtype: "auto"
   quantization: null
   enable_prefix_caching: true
+
+server:
+  url: null
+  api_key: null
+  timeout: 120
 
 sampling:
   temperature: 0.1

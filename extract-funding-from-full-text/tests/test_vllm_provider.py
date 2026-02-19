@@ -301,3 +301,109 @@ class TestProviderFactory:
             )
             provider = ProviderFactory.create(settings)
             assert isinstance(provider, VLLMProvider)
+
+
+class TestVLLMProviderOnline:
+    def test_online_mode_creates_openai_model(self, tmp_path):
+        """When mode=online, the provider should create an OpenAILanguageModel."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                mock_openai_lm.assert_called_once()
+                call_kwargs = mock_openai_lm.call_args[1]
+                assert call_kwargs["model_id"] == "test-model"
+                assert call_kwargs["api_key"] == "dummy-key"
+                assert call_kwargs["base_url"] == "http://localhost:8000/v1"
+
+    def test_online_mode_with_lora_uses_lora_name(self, tmp_path):
+        """When LoRA is configured in online mode, lora.name becomes the model_id."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "base-model",
+                    "mode": "online",
+                    "lora": {"name": "my-adapter"},
+                    "server": {"url": "http://localhost:8000/v1"},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                call_kwargs = mock_openai_lm.call_args[1]
+                assert call_kwargs["model_id"] == "my-adapter"
+
+    def test_model_url_forces_online_mode(self, tmp_path):
+        """Passing model_url should override config to online mode."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    # mode not set (defaults to offline)
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(
+                    model_url="http://my-server:8000/v1",
+                    vllm_config_path=str(config_path),
+                )
+                mock_openai_lm.assert_called_once()
+                call_kwargs = mock_openai_lm.call_args[1]
+                assert call_kwargs["base_url"] == "http://my-server:8000/v1"
+
+    def test_online_build_extract_params(self, tmp_path):
+        """build_extract_params should work the same for online mode."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_model = MagicMock()
+                mock_openai_lm.return_value = mock_model
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                params = provider.build_extract_params(
+                    "Funded by NSF.", "Extract funders.", []
+                )
+                assert params["model"] is mock_model
+                assert params["text_or_documents"] == "Funded by NSF."
+                assert params["extraction_passes"] == 3

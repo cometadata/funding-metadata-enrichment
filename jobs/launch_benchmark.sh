@@ -6,17 +6,24 @@ set -euo pipefail
 # Usage:
 #   ./launch_benchmark.sh --stages statements --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --flavor a100-large
-#   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --flavor l4x1
+#   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --mode online --flavor a100-large
+#   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --lora-path /path --lora-name adapter
 
 STAGES=""
 FLAVOR="l4x1"
 MODEL="Qwen/Qwen3-8B"
+MODE="offline"
+LORA_PATH=""
+LORA_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --stages)   STAGES="$2"; shift 2 ;;
-        --flavor)   FLAVOR="$2"; shift 2 ;;
-        --model)    MODEL="$2"; shift 2 ;;
+        --stages)     STAGES="$2"; shift 2 ;;
+        --flavor)     FLAVOR="$2"; shift 2 ;;
+        --model)      MODEL="$2"; shift 2 ;;
+        --mode)       MODE="$2"; shift 2 ;;
+        --lora-path)  LORA_PATH="$2"; shift 2 ;;
+        --lora-name)  LORA_NAME="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -35,7 +42,9 @@ case "$STAGES" in
         ;;
     entities)
         SCRIPT="${SCRIPT_DIR}/run_benchmark_entities.py"
-        SCRIPT_ARGS="--model-id ${MODEL}"
+        SCRIPT_ARGS="--model-id ${MODEL} --mode ${MODE}"
+        [[ -n "$LORA_PATH" ]] && SCRIPT_ARGS+=" --lora-path ${LORA_PATH}"
+        [[ -n "$LORA_NAME" ]] && SCRIPT_ARGS+=" --lora-name ${LORA_NAME}"
         ;;
     *)
         echo "Error: --stages must be 'statements' or 'entities'" >&2
@@ -46,7 +55,11 @@ esac
 echo "Launching benchmark extraction job:"
 echo "  Stage:  ${STAGES}"
 echo "  Flavor: ${FLAVOR}"
-[[ "$STAGES" == "entities" ]] && echo "  Model:  ${MODEL}"
+if [[ "$STAGES" == "entities" ]]; then
+    echo "  Model:  ${MODEL}"
+    echo "  Mode:   ${MODE}"
+    [[ -n "$LORA_PATH" ]] && echo "  LoRA:   ${LORA_NAME:-default} (${LORA_PATH})"
+fi
 echo "  Script: $(basename "$SCRIPT")"
 
 hf jobs uv run \
