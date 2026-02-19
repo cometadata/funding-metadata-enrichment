@@ -155,6 +155,8 @@ def validate_provider_requirements(
     model_id: Optional[str] = None,
     skip_model_validation: bool = False,
 ) -> None:
+    if skip_model_validation:
+        return
     if not model_id and not model_url:
         raise ProviderConfigurationError(
             "Either --model or --model-url must be provided."
