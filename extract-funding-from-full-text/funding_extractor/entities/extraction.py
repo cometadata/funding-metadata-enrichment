@@ -40,15 +40,22 @@ def create_funding_examples(
 
 
 def build_provider_settings(
-    model_id: Optional[str],
-    model_url: Optional[str],
-    api_key: Optional[str],
-    timeout: int,
-    skip_model_validation: bool,
-    debug: bool,
+    provider: str = "openai",
+    model_id: Optional[str] = None,
+    model_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: int = 60,
+    skip_model_validation: bool = False,
+    debug: bool = False,
     reasoning_effort: Optional[str] = None,
+    vllm_config_path: Optional[str] = None,
+    lora_path: Optional[str] = None,
 ) -> ProviderSettings:
+    provider_enum = ModelProvider(provider)
     resolved_api_key = api_key or os.environ.get("OPENAI_API_KEY")
+
+    if provider_enum == ModelProvider.VLLM:
+        skip_model_validation = True
 
     validate_provider_requirements(
         api_key=resolved_api_key,
@@ -58,7 +65,7 @@ def build_provider_settings(
     )
 
     return ProviderSettings(
-        provider=ModelProvider.OPENAI,
+        provider=provider_enum,
         model_id=model_id,
         model_url=model_url,
         api_key=resolved_api_key,
@@ -66,6 +73,8 @@ def build_provider_settings(
         timeout=timeout,
         skip_model_validation=skip_model_validation,
         debug=debug,
+        vllm_config_path=vllm_config_path,
+        lora_path=lora_path,
     )
 
 
@@ -88,6 +97,7 @@ class StructuredExtractionService:
 
 def extract_structured_entities(
     funding_statement: str,
+    provider: str = "openai",
     model_id: Optional[str] = None,
     model_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -98,8 +108,11 @@ def extract_structured_entities(
     prompt_file: Optional[str] = None,
     examples_file: Optional[str] = None,
     custom_config_dir: Optional[str] = None,
+    vllm_config_path: Optional[str] = None,
+    lora_path: Optional[str] = None,
 ) -> ExtractionResult:
     settings = build_provider_settings(
+        provider=provider,
         model_id=model_id,
         model_url=model_url,
         api_key=api_key,
@@ -107,6 +120,8 @@ def extract_structured_entities(
         skip_model_validation=skip_model_validation,
         debug=debug,
         reasoning_effort=reasoning_effort,
+        vllm_config_path=vllm_config_path,
+        lora_path=lora_path,
     )
     service = StructuredExtractionService(
         provider_settings=settings,

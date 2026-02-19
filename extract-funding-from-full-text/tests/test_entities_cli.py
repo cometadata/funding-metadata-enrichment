@@ -108,3 +108,24 @@ def test_run_groups_by_document_id(mock_extract, tmp_path):
     assert len(data["results"]) == 2
     assert len(data["results"]["doc-1"]["funding_statements"]) == 2
     assert len(data["results"]["doc-2"]["funding_statements"]) == 1
+
+
+def test_add_arguments_vllm_flags():
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    args = parser.parse_args([
+        "-i", "stmts.jsonl",
+        "--provider", "vllm",
+        "--vllm-config", "/path/to/config.yaml",
+        "--lora-path", "/path/to/lora",
+    ])
+    assert args.provider == "vllm"
+    assert args.vllm_config == "/path/to/config.yaml"
+    assert args.lora_path == "/path/to/lora"
+
+
+def test_add_arguments_provider_default():
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    args = parser.parse_args(["-i", "stmts.jsonl"])
+    assert args.provider == "openai"

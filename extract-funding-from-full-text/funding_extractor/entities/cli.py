@@ -29,6 +29,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timeout", type=int, default=60, help="LLM request timeout (default: 60)")
     parser.add_argument("--skip-model-validation", action="store_true", help="Skip model validation")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--provider", default="openai", choices=["openai", "vllm"], help="LLM provider (default: openai)")
+    parser.add_argument("--vllm-config", help="Path to vLLM YAML config file (required for --provider vllm)")
+    parser.add_argument("--lora-path", help="Path to LoRA adapter (overrides vLLM config)")
 
     parser.add_argument("--prompt-file", help="Extraction prompt file")
     parser.add_argument("--examples-file", help="Extraction examples file")
@@ -48,6 +51,7 @@ def _extract_single(
 ) -> ExtractionResult:
     return extract_structured_entities(
         funding_statement=statement_text,
+        provider=getattr(args, "provider", "openai"),
         model_id=getattr(args, "model", None),
         model_url=getattr(args, "model_url", None),
         api_key=getattr(args, "api_key", None),
@@ -58,6 +62,8 @@ def _extract_single(
         prompt_file=getattr(args, "prompt_file", None),
         examples_file=getattr(args, "examples_file", None),
         custom_config_dir=getattr(args, "config_dir", None),
+        vllm_config_path=getattr(args, "vllm_config", None),
+        lora_path=getattr(args, "lora_path", None),
     )
 
 
