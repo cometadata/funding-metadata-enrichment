@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 class ModelProvider(str, Enum):
     OPENAI = "openai"
+    VLLM = "vllm"
 
 
 @dataclass
@@ -34,6 +35,11 @@ _PROVIDER_CONFIGS = {
         default_model=None,
         requires_api_key=False,
         default_url=os.environ.get("OPENAI_BASE_URL"),
+    ),
+    ModelProvider.VLLM: ProviderConfig(
+        provider=ModelProvider.VLLM,
+        default_model=None,
+        requires_api_key=False,
     ),
 }
 

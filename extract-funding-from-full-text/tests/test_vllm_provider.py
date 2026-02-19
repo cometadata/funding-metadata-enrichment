@@ -4,7 +4,9 @@ import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
+from funding_extractor.providers.base import ModelProvider
 from funding_extractor.providers.vllm_config import (
     VLLMConfig,
     VLLMEngineConfig,
@@ -221,3 +223,81 @@ class TestVLLMLanguageModelEngine:
 
             call_kwargs = mocks["vllm"].LLM.call_args[1]
             assert call_kwargs["quantization"] == "awq"
+
+
+class TestVLLMProviderEnum:
+    def test_vllm_in_model_provider(self):
+        assert ModelProvider.VLLM == "vllm"
+
+    def test_vllm_provider_config_exists(self):
+        from funding_extractor.providers.base import get_provider_config
+        config = get_provider_config(ModelProvider.VLLM)
+        assert config.requires_api_key is False
+
+
+class TestVLLMProvider:
+    def test_build_extract_params(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({"model": "test-model"}), encoding="utf-8"
+            )
+
+            provider = VLLMProvider(
+                model_id=None,
+                model_url=None,
+                api_key=None,
+                vllm_config_path=str(config_path),
+            )
+            params = provider.build_extract_params(
+                "Funded by NSF.", "Extract funders.", []
+            )
+
+            assert params["text_or_documents"] == "Funded by NSF."
+            assert params["prompt_description"] == "Extract funders."
+            assert params["extraction_passes"] == 3
+            assert params["max_workers"] == 1
+            assert params["fence_output"] is True
+            assert hasattr(params["model"], "infer")
+
+    def test_provider_property(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({"model": "test-model"}), encoding="utf-8"
+            )
+
+            provider = VLLMProvider(
+                model_id=None,
+                model_url=None,
+                api_key=None,
+                vllm_config_path=str(config_path),
+            )
+            assert provider.provider == ModelProvider.VLLM
+
+
+class TestProviderFactory:
+    def test_factory_creates_vllm_provider(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.config.settings import ProviderSettings
+            from funding_extractor.providers.factory import ProviderFactory
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({"model": "test-model"}), encoding="utf-8"
+            )
+
+            settings = ProviderSettings(
+                provider=ModelProvider.VLLM,
+                vllm_config_path=str(config_path),
+            )
+            provider = ProviderFactory.create(settings)
+            assert isinstance(provider, VLLMProvider)

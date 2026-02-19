@@ -54,6 +54,8 @@ class ProviderSettings:
     reasoning_effort: Optional[str] = None
     skip_model_validation: bool = False
     debug: bool = False
+    vllm_config_path: Optional[str] = None
+    lora_path: Optional[str] = None
 
 
 @dataclass

@@ -3,12 +3,14 @@
 import logging
 import threading
 from collections.abc import Iterator, Sequence
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from langextract.core.base_model import BaseLanguageModel
 from langextract.core.types import ScoredOutput
 
-from funding_extractor.providers.vllm_config import VLLMConfig
+from funding_extractor.exceptions import ProviderConfigurationError
+from funding_extractor.providers.base import BaseProvider, ModelProvider
+from funding_extractor.providers.vllm_config import VLLMConfig, load_vllm_config
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +85,55 @@ class VLLMLanguageModel(BaseLanguageModel):
 
         for output in outputs:
             yield [ScoredOutput(score=1.0, output=output.outputs[0].text)]
+
+
+class VLLMProvider(BaseProvider):
+    """Provider that runs extraction through a local vLLM engine."""
+
+    def __init__(
+        self,
+        model_id: Optional[str] = None,
+        model_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: int = 60,
+        debug: bool = False,
+        reasoning_effort: Optional[str] = None,
+        vllm_config_path: Optional[str] = None,
+        lora_path: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            model_id=model_id,
+            model_url=model_url,
+            api_key=api_key,
+            timeout=timeout,
+            debug=debug,
+            reasoning_effort=reasoning_effort,
+        )
+        if not vllm_config_path:
+            raise ProviderConfigurationError(
+                "--vllm-config is required when using --provider vllm."
+            )
+        self._vllm_config = load_vllm_config(
+            vllm_config_path,
+            model_override=model_id,
+            lora_path_override=lora_path,
+        )
+        self._language_model = VLLMLanguageModel(self._vllm_config)
+
+    @property
+    def provider(self) -> ModelProvider:
+        return ModelProvider.VLLM
+
+    def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]:
+        return {
+            "text_or_documents": statement,
+            "prompt_description": prompt,
+            "examples": examples,
+            "temperature": self._vllm_config.sampling.temperature,
+            "extraction_passes": 3,
+            "max_workers": 1,
+            "debug": self.debug,
+            "fence_output": True,
+            "use_schema_constraints": False,
+            "model": self._language_model,
+        }

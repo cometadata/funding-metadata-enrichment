@@ -8,6 +8,11 @@ from funding_extractor.providers.base import BaseProvider, ModelProvider
 from funding_extractor.providers.openai import OpenAIProvider
 
 
+def _import_vllm_provider():
+    from funding_extractor.providers.vllm import VLLMProvider
+    return VLLMProvider
+
+
 class ProviderFactory:
     _providers: Dict[ModelProvider, Type[BaseProvider]] = {
         ModelProvider.OPENAI: OpenAIProvider,
@@ -15,10 +20,15 @@ class ProviderFactory:
 
     @classmethod
     def create(cls, settings: ProviderSettings) -> BaseProvider:
-        provider_cls: Optional[Type[BaseProvider]] = cls._providers.get(settings.provider)
+        if settings.provider == ModelProvider.VLLM:
+            provider_cls = _import_vllm_provider()
+        else:
+            provider_cls = cls._providers.get(settings.provider)
+
         if provider_cls is None:
             raise ProviderNotFoundError(f"Provider '{settings.provider}' is not supported.")
-        return provider_cls(
+
+        kwargs = dict(
             model_id=settings.model_id,
             model_url=settings.model_url,
             api_key=settings.api_key,
@@ -26,3 +36,8 @@ class ProviderFactory:
             debug=settings.debug,
             reasoning_effort=settings.reasoning_effort,
         )
+        if settings.provider == ModelProvider.VLLM:
+            kwargs["vllm_config_path"] = settings.vllm_config_path
+            kwargs["lora_path"] = settings.lora_path
+
+        return provider_cls(**kwargs)
