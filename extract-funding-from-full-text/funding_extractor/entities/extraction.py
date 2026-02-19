@@ -11,7 +11,6 @@ from funding_extractor.config.settings import ProviderSettings
 from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.providers.base import (
     ModelProvider,
-    get_provider_config,
     validate_provider_requirements,
 )
 from funding_extractor.providers.factory import ProviderFactory
@@ -41,7 +40,6 @@ def create_funding_examples(
 
 
 def build_provider_settings(
-    provider: ModelProvider,
     model_id: Optional[str],
     model_url: Optional[str],
     api_key: Optional[str],
@@ -50,29 +48,19 @@ def build_provider_settings(
     debug: bool,
     reasoning_effort: Optional[str] = None,
 ) -> ProviderSettings:
-    config = get_provider_config(provider)
-    resolved_model = model_id or config.default_model
-    resolved_url = model_url or config.default_url
-    resolved_api_key = api_key
-
-    if resolved_api_key is None:
-        if provider == ModelProvider.OPENAI:
-            resolved_api_key = os.environ.get("OPENAI_API_KEY")
-        elif provider == ModelProvider.GEMINI:
-            resolved_api_key = os.environ.get("GEMINI_API_KEY")
+    resolved_api_key = api_key or os.environ.get("OPENAI_API_KEY")
 
     validate_provider_requirements(
-        provider=provider,
         api_key=resolved_api_key,
-        model_url=resolved_url,
-        model_id=resolved_model,
+        model_url=model_url,
+        model_id=model_id,
         skip_model_validation=skip_model_validation,
     )
 
     return ProviderSettings(
-        provider=provider,
-        model_id=resolved_model,
-        model_url=resolved_url,
+        provider=ModelProvider.OPENAI,
+        model_id=model_id,
+        model_url=model_url,
         api_key=resolved_api_key,
         reasoning_effort=reasoning_effort,
         timeout=timeout,
@@ -100,7 +88,6 @@ class StructuredExtractionService:
 
 def extract_structured_entities(
     funding_statement: str,
-    provider: ModelProvider = ModelProvider.GEMINI,
     model_id: Optional[str] = None,
     model_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -113,7 +100,6 @@ def extract_structured_entities(
     custom_config_dir: Optional[str] = None,
 ) -> ExtractionResult:
     settings = build_provider_settings(
-        provider=provider,
         model_id=model_id,
         model_url=model_url,
         api_key=api_key,

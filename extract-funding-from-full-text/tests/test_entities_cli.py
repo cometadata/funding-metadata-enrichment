@@ -22,17 +22,15 @@ def test_add_arguments_default_output():
     assert args.output == "funding_results.json"
 
 
-def test_add_arguments_provider_flags():
+def test_add_arguments_model_flags():
     parser = argparse.ArgumentParser()
     add_arguments(parser)
     args = parser.parse_args([
         "-i", "stmts.jsonl",
-        "--provider", "openai",
         "--model", "gpt-4o",
         "--api-key", "sk-test",
         "--timeout", "120",
     ])
-    assert args.provider == "openai"
     assert args.model == "gpt-4o"
     assert args.api_key == "sk-test"
     assert args.timeout == 120
@@ -60,7 +58,6 @@ def test_run_produces_json_output(mock_extract, tmp_path):
     args = parser.parse_args([
         "-i", str(jsonl_input),
         "-o", str(output),
-        "--provider", "gemini",
         "--skip-model-validation",
     ])
 
@@ -100,7 +97,6 @@ def test_run_groups_by_document_id(mock_extract, tmp_path):
     args = parser.parse_args([
         "-i", str(jsonl_input),
         "-o", str(output),
-        "--provider", "gemini",
         "--skip-model-validation",
     ])
 

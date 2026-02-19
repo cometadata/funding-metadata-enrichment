@@ -13,7 +13,6 @@ from funding_extractor.entities.io import read_statements_by_document, write_res
 from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.io.checkpointing import CheckpointRepository, get_file_hash
 from funding_extractor.models import DocumentResult, ProcessingParameters, ProcessingResults
-from funding_extractor.providers.base import ModelProvider
 from funding_extractor.statements.models import FundingStatement
 
 
@@ -23,12 +22,6 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-i", "--input", required=True, help="Input JSONL file of funding statements")
     parser.add_argument("-o", "--output", default="funding_results.json", help="Output JSON file (default: funding_results.json)")
 
-    parser.add_argument(
-        "--provider",
-        choices=["gemini", "ollama", "openai", "local_openai"],
-        default="gemini",
-        help="LLM provider (default: gemini)",
-    )
     parser.add_argument("--model", help="Model ID")
     parser.add_argument("--model-url", help="API endpoint URL")
     parser.add_argument("--api-key", help="API key")
@@ -55,7 +48,6 @@ def _extract_single(
 ) -> ExtractionResult:
     return extract_structured_entities(
         funding_statement=statement_text,
-        provider=ModelProvider(args.provider),
         model_id=getattr(args, "model", None),
         model_url=getattr(args, "model_url", None),
         api_key=getattr(args, "api_key", None),
@@ -199,7 +191,6 @@ def run(args: argparse.Namespace) -> None:
         parameters=ProcessingParameters(
             input_path=str(input_path),
             input_format="jsonl",
-            provider=args.provider,
             model=getattr(args, "model", None),
         ),
         results=doc_results,

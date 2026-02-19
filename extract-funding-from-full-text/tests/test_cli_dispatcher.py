@@ -24,10 +24,10 @@ def test_statements_subcommand_has_retrieval_model():
     assert args.retrieval_model == "my-model"
 
 
-def test_entities_subcommand_has_provider():
+def test_entities_subcommand_has_model():
     parser = build_parser()
-    args = parser.parse_args(["entities", "-i", "x", "--provider", "openai"])
-    assert args.provider == "openai"
+    args = parser.parse_args(["entities", "-i", "x", "--model", "gpt-4o"])
+    assert args.model == "gpt-4o"
 
 
 def test_pipeline_subcommand_has_both_flags():
@@ -35,10 +35,10 @@ def test_pipeline_subcommand_has_both_flags():
     args = parser.parse_args([
         "pipeline", "-i", "input.md",
         "--retrieval-model", "my-model",
-        "--provider", "openai",
+        "--model", "gpt-4o",
     ])
     assert args.retrieval_model == "my-model"
-    assert args.provider == "openai"
+    assert args.model == "gpt-4o"
 
 
 @patch("funding_extractor.statements.cli.run")

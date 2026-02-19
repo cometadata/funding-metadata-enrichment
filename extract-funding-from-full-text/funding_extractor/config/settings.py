@@ -46,7 +46,7 @@ class ProcessingSettings:
 
 @dataclass
 class ProviderSettings:
-    provider: ModelProvider = ModelProvider.GEMINI
+    provider: ModelProvider = ModelProvider.OPENAI
     model_id: Optional[str] = None
     model_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -105,11 +105,9 @@ class ApplicationConfig:
             self.provider.model_url = provider_config.default_url
 
         if self.provider.api_key is None and provider_config.requires_api_key:
-            env_name = "OPENAI_API_KEY" if self.provider.provider == ModelProvider.OPENAI else "GEMINI_API_KEY"
-            self.provider.api_key = os.environ.get(env_name)
+            self.provider.api_key = os.environ.get("OPENAI_API_KEY")
 
         validate_provider_requirements(
-            provider=self.provider.provider,
             api_key=self.provider.api_key,
             model_url=self.provider.model_url,
             model_id=self.provider.model_id,

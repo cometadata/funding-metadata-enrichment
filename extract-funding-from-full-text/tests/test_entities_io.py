@@ -43,7 +43,7 @@ def test_write_and_load_results_json_roundtrip(tmp_path):
     output = tmp_path / "results.json"
     results = ProcessingResults(
         timestamp="2025-01-01T00:00:00",
-        parameters=ProcessingParameters(input_path="/tmp/stmts.jsonl", provider="gemini"),
+        parameters=ProcessingParameters(input_path="/tmp/stmts.jsonl"),
         results={
             "doc-1": DocumentResult(
                 filename="doc-1",

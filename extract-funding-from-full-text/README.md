@@ -50,8 +50,8 @@ extract-funding -i /path/to/documents -o results.json
 extract-funding -i /path/to/parquet-chunks --input-format parquet \
   --parquet-text-column markdown --parquet-id-column source_id -o results.json
 
-# Use a specific LLM provider
-extract-funding -i docs/ -o results.json --provider gemini --api-key YOUR_KEY
+# Use a specific model
+extract-funding -i docs/ -o results.json --model gpt-4o --api-key YOUR_KEY
 ```
 
 Alternatively, you can run the module directly:
@@ -66,7 +66,7 @@ The tool uses configuration files located in the `configs/` directory for its ex
 ### Query Configuration
 `configs/queries/default.yaml` - Defines the semantic search queries for finding funding statements
 
-### Pattern Configuration  
+### Pattern Configuration
 `configs/patterns/funding_patterns.yaml` - Regular expressions for identifying the sections of text with funding details
 
 ### Extraction Configuration
@@ -87,11 +87,11 @@ extract-funding -i paper.md -o funding.json
 extract-funding -i docs/ -o results.json --normalize
 ```
 
-### Using Ollama
+### Using a Custom OpenAI-Compatible Endpoint
 ```bash
 extract-funding -i docs/ -o results.json \
-  --provider ollama --model llama3.2 \
-  --model-url http://localhost:11434
+  --model-url http://localhost:8000 \
+  --model my-model
 ```
 
 ### Skip Structured Extraction
@@ -120,11 +120,11 @@ extract-funding -i docs/ -o results.json --skip-structured
 - `--batch-size` - Documents per batch (default: 10)
 - `--timeout` - LLM request timeout in seconds (default: 60)
 
-### LLM Provider Options
-- `--provider` - LLM provider: gemini, ollama, openai, local_openai
+### LLM Options
 - `--model` - Model ID to use
-- `--model-url` - API endpoint URL
-- `--api-key` - API key for the provider
+- `--model-url` - API endpoint URL (any OpenAI-compatible endpoint)
+- `--api-key` - API key (or set OPENAI_API_KEY environment variable)
+- `--reasoning-effort` - Reasoning effort level: none, low, medium, high
 
 ### ColBERT Options
 - `--colbert-model` - ColBERT model (default: [lightonai/GTE-ModernColBERT-v1](https://huggingface.co/lightonai/GTE-ModernColBERT-v1))
@@ -157,8 +157,7 @@ The tool generates a JSON file with the following structure:
   "parameters": {
     "input_path": "/path/to/documents",
     "normalize": true,
-    "provider": "gemini",
-    "model": "gemini-2.5-flash-lite",
+    "model": "gpt-4o",
     "threshold": 28.0,
     "top_k": 5
   },
@@ -205,36 +204,28 @@ The tool generates a JSON file with the following structure:
 
 ## Provider Setup
 
-### Gemini
-```bash
-export GEMINI_API_KEY=your_api_key
-extract-funding -i docs/ -o results.json --provider gemini
-```
+The tool uses any OpenAI-compatible API endpoint for LLM-based entity extraction.
 
 ### OpenAI
 ```bash
 export OPENAI_API_KEY=your_api_key
-extract-funding -i docs/ -o results.json --provider openai --model gpt-4o-mini
+extract-funding entities -i stmts.jsonl -o results.json --model gpt-4o-mini
 ```
 
-### Ollama
+### Custom OpenAI-Compatible Endpoint
+Any server that implements the OpenAI chat completions API can be used:
 ```bash
-# Start Ollama server
-ollama serve
-
-# Pull a model
-ollama pull llama3.2
-
-# Run extraction
-extract-funding -i docs/ -o results.json --provider ollama --model llama3.2
-```
-
-### Local OpenAI-Compatible Server
-```bash
-extract-funding -i docs/ -o results.json \
-  --provider local_openai \
+extract-funding entities -i stmts.jsonl -o results.json \
   --model-url http://localhost:8000 \
   --model your-model-name
+```
+
+### OpenRouter
+```bash
+export OPENAI_API_KEY=your_openrouter_key
+extract-funding entities -i stmts.jsonl -o results.json \
+  --model-url https://openrouter.ai/api/v1 \
+  --model anthropic/claude-sonnet-4
 ```
 
 ## Advanced Features

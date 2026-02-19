@@ -5,9 +5,7 @@ description = "Extract funding information from markdown documents using semanti
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "google-generativeai>=0.3.0",
     "langextract>=1.0.8",
-    "ollama>=0.1.0",
     "openai>=1.0.0",
     "pyarrow>=12.0.0",
     "pydantic>=2.0.0",
