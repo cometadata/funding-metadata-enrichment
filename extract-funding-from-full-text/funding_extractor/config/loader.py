@@ -10,7 +10,7 @@ from funding_extractor.exceptions import ConfigurationError
 def _base_config_dir(custom_config_dir: Optional[str] = None) -> Path:
     if custom_config_dir:
         return Path(custom_config_dir)
-    return Path(__file__).resolve().parents[2] / "configs"
+    return Path(__file__).resolve().parents[1] / "configs"
 
 
 def get_config_path(config_type: str, filename: str, custom_config_dir: Optional[str] = None) -> Path:

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "extract-funding-from-full-text"
 version = "0.1.0"
@@ -10,7 +14,6 @@ dependencies = [
     "pyarrow>=12.0.0",
     "pydantic>=2.0.0",
     "pylate>=0.1.0",
-    "pytest>=7.0.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
     "requests>=2.31.0",
@@ -20,9 +23,20 @@ dependencies = [
     "rapidfuzz>=3.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7.0.0"]
+
 [project.scripts]
 extract-funding = "funding_extractor.cli.main:main"
 benchmark-funding = "funding_extractor.benchmark.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["funding_extractor*"]
+
+[tool.setuptools.package-data]
+funding_extractor = [
+    "configs/queries/*.yaml",
+    "configs/patterns/*.yaml",
+    "configs/prompts/*.txt",
+    "configs/prompts/*.json",
+]
