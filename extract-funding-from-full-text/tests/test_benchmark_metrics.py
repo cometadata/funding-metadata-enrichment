@@ -1,4 +1,3 @@
-# tests/test_benchmark_metrics.py
 import sys
 from pathlib import Path
 

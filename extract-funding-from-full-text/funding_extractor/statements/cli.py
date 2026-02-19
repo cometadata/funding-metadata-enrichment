@@ -147,7 +147,6 @@ def run(args: argparse.Namespace) -> None:
     if resume and not force:
         print(f"Resuming from checkpoint: {len(processed_lookup)} documents already processed")
 
-    # Build document iterator
     documents_iter: Iterator[Tuple[DocumentPayload, str]]
     total_documents: Optional[int] = None
     text_fallbacks = [] if getattr(args, "text_column", None) else ["markdown", "content", "text", "body"]
@@ -217,7 +216,6 @@ def run(args: argparse.Namespace) -> None:
         print(f"Processing {total_documents} files...")
         documents_iter = iter(docs_with_hashes)
 
-    # Process documents
     all_statements: List[Tuple[str, FundingStatement]] = []
     processed_count = 0
     batch_buffer: List[Tuple[str, FundingStatement]] = []
@@ -278,7 +276,6 @@ def run(args: argparse.Namespace) -> None:
                 future = executor.submit(_extract_from_document, document, queries, args)
                 pending[future] = (document, doc_hash)
 
-            # Drain remaining
             for future in concurrent.futures.as_completed(pending.keys()):
                 doc_meta = pending[future]
                 try:
@@ -302,7 +299,6 @@ def run(args: argparse.Namespace) -> None:
 
     flush_batch()
 
-    # Write output
     count = write_statements_jsonl(output_path, all_statements)
     print(f"\nExtracted {count} funding statements from {processed_count} documents")
     print(f"Output: {output_path}")

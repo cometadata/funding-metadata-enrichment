@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/matching.py
-"""Text matching utilities for benchmark evaluation."""
-
 import re
 from typing import Callable, Iterable, List, Optional, Tuple
 

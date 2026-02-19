@@ -52,7 +52,6 @@ AUTHOR_SPECIFIC_PATTERNS = [
     r'\bthe\s+(?:first|second|third)\s+author\s+(?:is|was)\s+supported',
 ]
 
-# Negative patterns
 CITATION_PATTERNS = [
     r'^\s*\[\d+\]',
     r'^\s*\d+\.\s+[A-Z][a-z]+',

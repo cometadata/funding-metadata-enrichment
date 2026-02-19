@@ -1,4 +1,3 @@
-# tests/test_extraction_parsing.py
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,7 +51,6 @@ def test_funder_with_scheme_groups_into_award():
     result = BaseProvider._convert_extractions_to_result(extractions, "stmt")
     f = result.funders[0]
     assert f.funder_name == "USDA"
-    # All IDs under same scheme -> one award
     assert len(f.awards) == 1
     assert f.awards[0].funding_scheme == ["Multistate Research Project"]
     assert set(f.awards[0].award_ids) == {"PEN04623", "1013257"}

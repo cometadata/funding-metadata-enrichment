@@ -95,11 +95,9 @@ def run(args: argparse.Namespace) -> None:
     if resume and not force:
         print(f"Resuming: {len(processed_lookup)} statements already processed")
 
-    # Build results structure
     doc_results: Dict[str, DocumentResult] = {}
     extraction_map: Dict[str, ExtractionResult] = {}
 
-    # Populate statement metadata for all documents
     for doc_id, records in grouped.items():
         doc = DocumentResult(filename=doc_id)
         for record in records:
@@ -114,7 +112,6 @@ def run(args: argparse.Namespace) -> None:
             doc.funding_statements.append(stmt)
         doc_results[doc_id] = doc
 
-    # Collect unique statements to extract
     unique_statements = set()
     for records in grouped.values():
         for record in records:
@@ -182,7 +179,6 @@ def run(args: argparse.Namespace) -> None:
 
         checkpoint_repo.save()
 
-    # Assign extraction results to documents
     for doc_id, doc in doc_results.items():
         seen = set()
         for stmt in doc.funding_statements:

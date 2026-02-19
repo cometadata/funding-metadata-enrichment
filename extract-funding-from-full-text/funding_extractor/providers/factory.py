@@ -1,5 +1,3 @@
-"""Factory for provider implementations."""
-
 from typing import Dict, Optional, Type
 
 from funding_extractor.config.settings import ProviderSettings

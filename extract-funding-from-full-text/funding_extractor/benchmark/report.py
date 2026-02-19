@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/report.py
-"""Output formatting for benchmark results."""
-
 import json
 from datetime import datetime
 from pathlib import Path

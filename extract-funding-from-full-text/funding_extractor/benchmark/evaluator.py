@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/evaluator.py
-"""Benchmark evaluation orchestrator."""
-
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -70,7 +67,6 @@ def match_predictions_to_gold(
                 matched_pred_keys.add(pred_key)
                 continue
 
-    # Add unmatched gold docs with empty predictions
     for gold_doi, gold_doc in gold_lookup.items():
         if gold_doi not in matched_gold_dois:
             matched.append((gold_doi, gold_doc, {"statements": [], "funders": []}))

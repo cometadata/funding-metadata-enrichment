@@ -1,4 +1,3 @@
-"""Checkpoint persistence utilities."""
 import os
 import json
 import hashlib

@@ -1,5 +1,3 @@
-"""OpenAI-compatible provider implementation."""
-
 import os
 from functools import wraps
 

@@ -1,4 +1,3 @@
-# tests/test_benchmark_evaluator.py
 import json
 import sys
 from pathlib import Path

@@ -1,5 +1,3 @@
-"""vLLM engine configuration loading."""
-
 from dataclasses import dataclass, field, fields
 from typing import Optional
 

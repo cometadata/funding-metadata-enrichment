@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/cli.py
-"""CLI entry point for funding extraction benchmark."""
-
 import argparse
 import sys
 from pathlib import Path
@@ -28,7 +25,6 @@ Examples:
         """,
     )
 
-    # Mode
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument(
         "--predictions",
@@ -46,7 +42,6 @@ Examples:
         help="Run full extraction pipeline against HF dataset (not yet implemented)",
     )
 
-    # Dataset options
     parser.add_argument(
         "--dataset",
         default="cometadata/preprint-funding-pdfs-md-conversion",
@@ -64,7 +59,6 @@ Examples:
         help="Limit number of samples (for quick testing)",
     )
 
-    # Matching options
     parser.add_argument(
         "--threshold",
         type=float,
@@ -84,7 +78,6 @@ Examples:
         help="How to match award IDs (default: normalized)",
     )
 
-    # Output options
     parser.add_argument(
         "--output-json",
         type=Path,

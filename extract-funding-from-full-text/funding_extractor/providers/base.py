@@ -1,5 +1,3 @@
-"""Provider abstractions and shared validation."""
-
 import concurrent.futures
 import logging
 import os
@@ -52,8 +50,6 @@ def get_provider_config(provider: ModelProvider) -> ProviderConfig:
 
 
 class BaseProvider(ABC):
-    """Abstract base class for structured extraction providers."""
-
     def __init__(
         self,
         model_id: Optional[str],
@@ -72,12 +68,10 @@ class BaseProvider(ABC):
 
     @property
     @abstractmethod
-    def provider(self) -> ModelProvider:
-        """Provider type."""
+    def provider(self) -> ModelProvider: ...
 
     @abstractmethod
-    def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]:
-        """Build provider-specific parameters for langextract.extract."""
+    def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]: ...
 
     def extract(self, statement: str, prompt: str, examples: List[Any]) -> ExtractionResult:
         params = self.build_extract_params(statement, prompt, examples)

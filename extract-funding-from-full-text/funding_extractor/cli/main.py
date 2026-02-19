@@ -23,7 +23,6 @@ Subcommands:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    # statements subcommand
     stmt_parser = subparsers.add_parser(
         "statements",
         help="Extract funding statements from documents (stage 1)",
@@ -31,7 +30,6 @@ Subcommands:
     )
     statements_cli.add_arguments(stmt_parser)
 
-    # entities subcommand
     entity_parser = subparsers.add_parser(
         "entities",
         help="Extract structured entities from funding statements (stage 2)",
@@ -39,8 +37,7 @@ Subcommands:
     )
     entities_cli.add_arguments(entity_parser)
 
-    # pipeline subcommand — resolve conflicts because both stages share
-    # flags like -i, -o, -v, etc.  The last add_arguments call wins.
+    # conflict_handler="resolve" needed because both stages share flags like -i, -o, -v
     pipeline_parser = subparsers.add_parser(
         "pipeline",
         help="Run full extraction pipeline (statements + entities)",
@@ -65,19 +62,16 @@ def main_with_args(args: argparse.Namespace) -> None:
         entities_cli.run(args)
 
     elif args.command == "pipeline":
-        # Determine intermediate file path
         intermediate = getattr(args, "intermediate_file", None)
         if intermediate:
             intermediate_path = Path(intermediate)
         else:
             intermediate_path = Path(str(args.output) + ".statements.jsonl")
 
-        # Stage 1: statements extraction
         stage1_args = copy.copy(args)
         stage1_args.output = str(intermediate_path)
         statements_cli.run(stage1_args)
 
-        # Stage 2: entity extraction
         stage2_args = copy.copy(args)
         stage2_args.input = str(intermediate_path)
         entities_cli.run(stage2_args)

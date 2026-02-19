@@ -7,7 +7,6 @@ from funding_extractor.cli.main import build_parser
 
 def test_parser_has_subcommands():
     parser = build_parser()
-    # Verify subcommands exist by parsing each one with minimal args
     args = parser.parse_args(["statements", "-i", "input.md"])
     assert args.command == "statements"
 

@@ -1,4 +1,3 @@
-# tests/test_models.py
 import json
 from funding_extractor.statements.models import FundingStatement
 from funding_extractor.entities.models import Award, FunderEntity, ExtractionResult

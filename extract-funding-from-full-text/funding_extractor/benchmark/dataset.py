@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/dataset.py
-"""HuggingFace dataset loading and gold data normalization."""
-
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional

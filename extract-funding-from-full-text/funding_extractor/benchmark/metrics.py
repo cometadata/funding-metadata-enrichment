@@ -1,6 +1,3 @@
-# funding_extractor/benchmark/metrics.py
-"""Multi-level metrics computation for benchmark evaluation."""
-
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -175,11 +172,9 @@ def _evaluate_per_funder(
 
     Returns (funder_metrics, id_metrics, scheme_metrics, title_metrics).
     """
-    # Merge funders with similar names before evaluation
     gold_merged = _merge_gold_funders(gold_funders, funder_threshold)
     pred_merged = _merge_pred_funders(pred_funders, funder_threshold)
 
-    # Filter to funders with names for name-based matching
     gold_named_indices = [i for i, f in enumerate(gold_merged) if f.funder_name]
     pred_named_indices = [i for i, f in enumerate(pred_merged) if f.funder_name]
 
@@ -193,7 +188,6 @@ def _evaluate_per_funder(
         len(gold_named), len(pred_named), funder_matched_count, funder_matched_count
     )
 
-    # Map matched indices back to merged funder lists
     matched_gold_set: set = set()
     matched_pred_set: set = set()
     paired = []
@@ -204,7 +198,6 @@ def _evaluate_per_funder(
         matched_gold_set.add(gi)
         matched_pred_set.add(pi)
 
-    # Pair unnamed funders for award-level evaluation (no funder-level credit)
     unnamed_gold_idx = next(
         (i for i, f in enumerate(gold_merged) if not f.funder_name), None
     )
@@ -216,7 +209,6 @@ def _evaluate_per_funder(
         matched_gold_set.add(unnamed_gold_idx)
         matched_pred_set.add(unnamed_pred_idx)
 
-    # Evaluate awards within each matched funder pair
     total_id_gold = total_id_pred = total_id_matched = 0
     total_scheme_gold = total_scheme_pred = total_scheme_matched = 0
     total_title_gold = total_title_pred = total_title_matched = 0
@@ -240,7 +232,6 @@ def _evaluate_per_funder(
         total_title_pred += len(p_titles)
         total_title_matched += len(title_matches)
 
-    # Unmatched gold funders: their awards are false negatives
     for gi in range(len(gold_merged)):
         if gi not in matched_gold_set:
             g_ids, g_schemes, g_titles = _collect_awards_from_gold(gold_merged[gi])
@@ -248,7 +239,6 @@ def _evaluate_per_funder(
             total_scheme_gold += len(g_schemes)
             total_title_gold += len(g_titles)
 
-    # Unmatched pred funders: their awards are false positives
     for pi in range(len(pred_merged)):
         if pi not in matched_pred_set:
             p_ids, p_schemes, p_titles = _collect_awards_from_pred(pred_merged[pi])

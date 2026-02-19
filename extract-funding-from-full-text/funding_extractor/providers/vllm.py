@@ -1,5 +1,3 @@
-"""vLLM direct inference provider."""
-
 import logging
 import threading
 from collections.abc import Iterator, Sequence
@@ -16,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class VLLMLanguageModel(BaseLanguageModel):
-    """Langextract-compatible wrapper around a vLLM engine."""
-
     _engine = None
     _engine_lock = threading.Lock()
 
@@ -88,8 +84,6 @@ class VLLMLanguageModel(BaseLanguageModel):
 
 
 class VLLMProvider(BaseProvider):
-    """Provider that runs extraction through a local vLLM engine."""
-
     def __init__(
         self,
         model_id: Optional[str] = None,

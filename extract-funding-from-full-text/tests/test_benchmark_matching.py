@@ -1,4 +1,3 @@
-# tests/test_benchmark_matching.py
 import sys
 from pathlib import Path
 

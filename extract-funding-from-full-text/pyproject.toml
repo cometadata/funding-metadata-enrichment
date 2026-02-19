@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=82.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,23 +9,23 @@ description = "Extract funding information from markdown documents using semanti
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "langextract>=1.0.8",
-    "openai>=1.0.0",
-    "pyarrow>=12.0.0",
-    "pydantic>=2.0.0",
-    "pylate>=0.1.0",
-    "python-dotenv>=1.0.0",
-    "pyyaml>=6.0",
-    "requests>=2.31.0",
-    "torch>=2.0.0",
-    "datasets>=2.0.0",
-    "ftfy>=6.0.0",
-    "rapidfuzz>=3.0.0",
+    "langextract>=1.1.0",
+    "openai>=2.20.0",
+    "pyarrow>=23.0.0",
+    "pydantic>=2.12.0",
+    "pylate>=1.3.0",
+    "python-dotenv>=1.2.0",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.0",
+    "torch>=2.10.0",
+    "datasets>=4.5.0",
+    "ftfy>=6.3.0",
+    "rapidfuzz>=3.14.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0.0"]
-vllm = ["vllm>=0.8.0"]
+test = ["pytest>=9.0.0"]
+vllm = ["vllm>=0.15.0"]
 
 [project.scripts]
 extract-funding = "funding_extractor.cli.main:main"
