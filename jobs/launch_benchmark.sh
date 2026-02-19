@@ -4,12 +4,11 @@ set -euo pipefail
 # Launch funding extraction benchmark as a HuggingFace Job.
 #
 # Usage:
-#   ./launch_benchmark.sh                                          # defaults
-#   ./launch_benchmark.sh --stages entities                        # entities only
-#   ./launch_benchmark.sh --stages both --flavor a10g-small        # both stages, custom GPU
-#   ./launch_benchmark.sh --model Qwen/Qwen3-8B --flavor l4x1     # custom model + GPU
+#   ./launch_benchmark.sh --stages statements --flavor a100-large
+#   ./launch_benchmark.sh --stages entities --flavor a100-large
+#   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --flavor l4x1
 
-STAGES="both"
+STAGES=""
 FLAVOR="l4x1"
 MODEL="Qwen/Qwen3-8B"
 
@@ -22,16 +21,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$STAGES" ]]; then
+    echo "Error: --stages is required (statements or entities)" >&2
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+case "$STAGES" in
+    statements)
+        SCRIPT="${SCRIPT_DIR}/run_benchmark_statements.py"
+        SCRIPT_ARGS=""
+        ;;
+    entities)
+        SCRIPT="${SCRIPT_DIR}/run_benchmark_entities.py"
+        SCRIPT_ARGS="--model-id ${MODEL}"
+        ;;
+    *)
+        echo "Error: --stages must be 'statements' or 'entities'" >&2
+        exit 1
+        ;;
+esac
+
 echo "Launching benchmark extraction job:"
-echo "  Stages: ${STAGES}"
+echo "  Stage:  ${STAGES}"
 echo "  Flavor: ${FLAVOR}"
-echo "  Model:  ${MODEL}"
+[[ "$STAGES" == "entities" ]] && echo "  Model:  ${MODEL}"
+echo "  Script: $(basename "$SCRIPT")"
 
 hf jobs uv run \
     --flavor "$FLAVOR" \
     --secrets HF_TOKEN \
     --timeout 2h \
-    "${SCRIPT_DIR}/run_benchmark_extraction.py" \
-    --stages "$STAGES" --model-id "$MODEL"
+    "$SCRIPT" \
+    $SCRIPT_ARGS
