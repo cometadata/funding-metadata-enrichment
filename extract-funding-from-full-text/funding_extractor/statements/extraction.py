@@ -4,7 +4,11 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 from typing import Pattern
 
-from pylate import models, rank
+try:
+    from pylate import models, rank
+except ImportError:
+    models = None  # type: ignore[assignment]
+    rank = None  # type: ignore[assignment]
 
 from funding_extractor.config.loader import load_funding_patterns
 from funding_extractor.statements.models import FundingStatement
@@ -26,7 +30,12 @@ class SemanticExtractionService:
         self._query_embeddings_cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Dict[str, Any]] = {}
         self._query_cache_lock = threading.Lock()
 
-    def _get_model(self, model_name: str) -> models.ColBERT:
+    def _get_model(self, model_name: str) -> "models.ColBERT":
+        if models is None:
+            raise ImportError(
+                "pylate is required for semantic search. "
+                "Install it with: pip install 'extract-funding-from-full-text[search]'"
+            )
         with self._model_cache_lock:
             model = self._model_cache.get(model_name)
             if model is None:
