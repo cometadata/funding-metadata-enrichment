@@ -224,13 +224,15 @@ class VLLMProvider(BaseProvider):
         return ModelProvider.VLLM
 
     def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]:
+        is_online = self._vllm_config.mode == "online"
+        extraction_passes = 3
         return {
             "text_or_documents": statement,
             "prompt_description": prompt,
             "examples": examples,
             "temperature": self._vllm_config.sampling.temperature,
-            "extraction_passes": 3,
-            "max_workers": 1,
+            "extraction_passes": extraction_passes,
+            "max_workers": extraction_passes if is_online else 1,
             "debug": self.debug,
             "fence_output": True,
             "use_schema_constraints": False,

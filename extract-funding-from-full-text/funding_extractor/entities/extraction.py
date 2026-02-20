@@ -89,17 +89,16 @@ class StructuredExtractionService:
         self.provider_settings = provider_settings
         self.prompt = create_extraction_prompt(prompt_file, custom_config_dir)
         self.examples = create_funding_examples(examples_file, custom_config_dir)
+        self._provider = ProviderFactory.create(provider_settings)
 
     def extract_entities(self, funding_statement: str) -> ExtractionResult:
-        provider = ProviderFactory.create(self.provider_settings)
-        return provider.extract(funding_statement, self.prompt, self.examples)
+        return self._provider.extract(funding_statement, self.prompt, self.examples)
 
     def extract_entities_with_reasoning(
         self, funding_statement: str
     ) -> Tuple[ExtractionResult, List[str]]:
-        provider = ProviderFactory.create(self.provider_settings)
-        result = provider.extract(funding_statement, self.prompt, self.examples)
-        reasoning = provider.drain_reasoning()
+        result = self._provider.extract(funding_statement, self.prompt, self.examples)
+        reasoning = self._provider.drain_reasoning()
         return result, reasoning
 
 

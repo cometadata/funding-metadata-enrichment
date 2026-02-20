@@ -230,6 +230,7 @@ def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Pop
         "--max-model-len", str(args.max_model_len),
         "--gpu-memory-utilization", str(args.gpu_memory_utilization),
         "--dtype", "auto",
+        "--disable-log-requests",
     ]
     if enable_thinking:
         cmd.extend(["--reasoning-parser", "qwen3"])
