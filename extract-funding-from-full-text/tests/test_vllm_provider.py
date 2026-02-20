@@ -316,6 +316,7 @@ class TestVLLMProviderOnline:
                     "model": "test-model",
                     "mode": "online",
                     "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"max_tokens": 2048},
                 }),
                 encoding="utf-8",
             )
@@ -329,6 +330,7 @@ class TestVLLMProviderOnline:
                 assert call_kwargs["model_id"] == "test-model"
                 assert call_kwargs["api_key"] == "dummy-key"
                 assert call_kwargs["base_url"] == "http://localhost:8000/v1"
+                assert call_kwargs["max_output_tokens"] == 2048
 
     def test_online_mode_with_lora_uses_lora_name(self, tmp_path):
         """When LoRA is configured in online mode, lora.name becomes the model_id."""

@@ -53,13 +53,13 @@ def test_load_minimal_config(tmp_path):
     assert config.model == "some-model"
     assert config.lora.path is None
     assert config.engine.tensor_parallel_size == 1
-    assert config.engine.max_model_len == 4096
+    assert config.engine.max_model_len == 16384
     assert config.engine.gpu_memory_utilization == 0.9
     assert config.engine.dtype == "auto"
     assert config.engine.quantization is None
     assert config.engine.enable_prefix_caching is True
     assert config.sampling.temperature == 0.1
-    assert config.sampling.max_tokens == 2048
+    assert config.sampling.max_tokens == 4096
 
 
 def test_load_config_model_override(tmp_path):

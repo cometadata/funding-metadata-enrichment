@@ -15,7 +15,7 @@ class VLLMLoRAConfig:
 @dataclass
 class VLLMEngineConfig:
     tensor_parallel_size: int = 1
-    max_model_len: int = 4096
+    max_model_len: int = 16384
     gpu_memory_utilization: float = 0.9
     dtype: str = "auto"
     quantization: Optional[str] = None
@@ -25,7 +25,7 @@ class VLLMEngineConfig:
 @dataclass
 class VLLMSamplingConfig:
     temperature: float = 0.1
-    max_tokens: int = 2048
+    max_tokens: int = 4096
 
 
 @dataclass

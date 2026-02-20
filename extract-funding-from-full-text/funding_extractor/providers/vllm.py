@@ -134,6 +134,7 @@ class VLLMProvider(BaseProvider):
             api_key=api_key,
             base_url=self._vllm_config.server.url,
             temperature=self._vllm_config.sampling.temperature,
+            max_output_tokens=self._vllm_config.sampling.max_tokens,
             max_workers=1,
         )
 

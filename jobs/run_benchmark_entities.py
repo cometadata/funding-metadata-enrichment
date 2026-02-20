@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=4096,
+        default=16384,
         help="vLLM max model context length",
     )
     parser.add_argument(
@@ -191,7 +191,7 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"\n"
         f"sampling:\n"
         f"  temperature: 0.1\n"
-        f"  max_tokens: 2048\n"
+        f"  max_tokens: 4096\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)
