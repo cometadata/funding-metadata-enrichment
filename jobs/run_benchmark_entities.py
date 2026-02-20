@@ -37,7 +37,7 @@ from collections import defaultdict
 from typing import Any, Optional
 
 import torch
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_dataset
 from huggingface_hub import login
 
 from funding_extractor.entities.extraction import (
@@ -452,8 +452,20 @@ def push_entities(
     output_dataset: str,
     config_name: str = "entities",
 ) -> None:
+    features = Features({
+        "doi": Value("string"),
+        "funders": [{
+            "funder_name": Value("string"),
+            "awards": [{
+                "award_ids": Sequence(Value("string")),
+                "award_title": Sequence(Value("string")),
+                "funding_scheme": Sequence(Value("string")),
+            }],
+        }],
+        "reasoning": Sequence(Value("string")),
+    })
     entities_dd = DatasetDict({
-        split: Dataset.from_list(rows)
+        split: Dataset.from_list(rows, features=features)
         for split, rows in results_by_split.items()
     })
     logger.info("Pushing config '%s' to %s", config_name, output_dataset)
