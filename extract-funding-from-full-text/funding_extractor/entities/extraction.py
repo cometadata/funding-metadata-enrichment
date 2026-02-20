@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import langextract as lx
 
@@ -93,6 +93,14 @@ class StructuredExtractionService:
     def extract_entities(self, funding_statement: str) -> ExtractionResult:
         provider = ProviderFactory.create(self.provider_settings)
         return provider.extract(funding_statement, self.prompt, self.examples)
+
+    def extract_entities_with_reasoning(
+        self, funding_statement: str
+    ) -> Tuple[ExtractionResult, List[str]]:
+        provider = ProviderFactory.create(self.provider_settings)
+        result = provider.extract(funding_statement, self.prompt, self.examples)
+        reasoning = provider.drain_reasoning()
+        return result, reasoning
 
 
 def extract_structured_entities(

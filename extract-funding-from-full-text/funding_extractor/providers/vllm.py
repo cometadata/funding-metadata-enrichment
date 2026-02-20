@@ -1,6 +1,8 @@
 import logging
+import re
 import threading
 from collections.abc import Iterator, Sequence
+from functools import wraps
 from typing import Any, Dict, List, Optional
 
 from langextract.core.base_model import BaseLanguageModel
@@ -12,6 +14,9 @@ from funding_extractor.providers.vllm_config import VLLMConfig, load_vllm_config
 
 logger = logging.getLogger(__name__)
 
+_THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
+_UNCLOSED_THINK_PATTERN = re.compile(r"<think>.*", re.DOTALL)
+
 
 class VLLMLanguageModel(BaseLanguageModel):
     _engine = None
@@ -21,8 +26,13 @@ class VLLMLanguageModel(BaseLanguageModel):
         super().__init__(**kwargs)
         self._config = config
         self._temperature = config.sampling.temperature
+        self._top_p = config.sampling.top_p
+        self._top_k = config.sampling.top_k
         self._max_tokens = config.sampling.max_tokens
+        self._enable_thinking = config.sampling.enable_thinking
         self._lora_request = self._build_lora_request(config)
+        self._reasoning_traces: list[str] = []
+        self._reasoning_lock = threading.Lock()
 
     @staticmethod
     def _build_lora_request(config: VLLMConfig) -> Optional[Any]:
@@ -61,6 +71,37 @@ class VLLMLanguageModel(BaseLanguageModel):
                 cls._engine = LLM(**engine_kwargs)
             return cls._engine
 
+    def _strip_thinking(self, text: str) -> str:
+        """Strip <think>...</think> tags from text, storing reasoning traces.
+
+        Handles both closed tags and unclosed tags (output truncated mid-think).
+        """
+        traces: list[str] = []
+
+        def _capture(match: re.Match) -> str:
+            content = match.group(0)
+            # Strip the tags to get just the reasoning content
+            inner = content.removeprefix("<think>").removesuffix("</think>").strip()
+            if inner:
+                traces.append(inner)
+            return ""
+
+        cleaned = _THINK_PATTERN.sub(_capture, text)
+        # Handle unclosed <think> tag (truncated output)
+        if "<think>" in cleaned:
+            unclosed = _UNCLOSED_THINK_PATTERN.search(cleaned)
+            if unclosed:
+                inner = unclosed.group(0).removeprefix("<think>").strip()
+                if inner:
+                    traces.append(inner)
+                cleaned = cleaned[:unclosed.start()]
+
+        if traces:
+            with self._reasoning_lock:
+                self._reasoning_traces.extend(traces)
+
+        return cleaned.strip()
+
     def infer(
         self, batch_prompts: Sequence[str], **kwargs: Any
     ) -> Iterator[Sequence[ScoredOutput]]:
@@ -69,6 +110,8 @@ class VLLMLanguageModel(BaseLanguageModel):
         merged = self.merge_kwargs(kwargs)
         sampling_params = SamplingParams(
             temperature=merged.get("temperature", self._temperature),
+            top_p=merged.get("top_p", self._top_p),
+            top_k=merged.get("top_k", self._top_k),
             max_tokens=merged.get("max_output_tokens", self._max_tokens),
         )
 
@@ -80,7 +123,35 @@ class VLLMLanguageModel(BaseLanguageModel):
         )
 
         for output in outputs:
-            yield [ScoredOutput(score=1.0, output=output.outputs[0].text)]
+            raw_text = output.outputs[0].text
+            if self._enable_thinking:
+                raw_text = self._strip_thinking(raw_text)
+            yield [ScoredOutput(score=1.0, output=raw_text)]
+
+
+def _patch_client_for_thinking(language_model: Any, enable_thinking: bool) -> None:
+    """Wrap the OpenAI client's create method to inject chat_template_kwargs
+    for Qwen3 thinking control and capture reasoning content from responses."""
+    original_create = language_model._client.chat.completions.create
+
+    @wraps(original_create)
+    def patched_create(**kwargs):
+        extra_body = kwargs.pop("extra_body", {}) or {}
+        extra_body["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+        kwargs["extra_body"] = extra_body
+        response = original_create(**kwargs)
+        if enable_thinking and response.choices:
+            reasoning = getattr(response.choices[0].message, "reasoning", None)
+            if reasoning is None:
+                reasoning = getattr(
+                    response.choices[0].message, "reasoning_content", None
+                )
+            if reasoning:
+                with language_model._reasoning_lock:
+                    language_model._reasoning_traces.append(reasoning)
+        return response
+
+    language_model._client.chat.completions.create = patched_create
 
 
 class VLLMProvider(BaseProvider):
@@ -129,14 +200,24 @@ class VLLMProvider(BaseProvider):
 
         logger.info("vLLM online mode: server=%s model=%s", self._vllm_config.server.url, model_id)
 
-        return OpenAILanguageModel(
+        lm = OpenAILanguageModel(
             model_id=model_id,
             api_key=api_key,
             base_url=self._vllm_config.server.url,
             temperature=self._vllm_config.sampling.temperature,
+            top_p=self._vllm_config.sampling.top_p,
+            top_k=self._vllm_config.sampling.top_k,
             max_output_tokens=self._vllm_config.sampling.max_tokens,
             max_workers=1,
         )
+
+        # Always patch to explicitly control Qwen3's thinking mode
+        # (Qwen3 defaults to thinking-on, so we must set it even when disabling)
+        lm._reasoning_traces = []
+        lm._reasoning_lock = threading.Lock()
+        _patch_client_for_thinking(lm, self._vllm_config.sampling.enable_thinking)
+
+        return lm
 
     @property
     def provider(self) -> ModelProvider:
@@ -156,3 +237,11 @@ class VLLMProvider(BaseProvider):
             "model": self._language_model,
             "resolver_params": {"suppress_parse_errors": True},
         }
+
+    def drain_reasoning(self) -> list[str]:
+        """Return and clear accumulated reasoning traces from the language model."""
+        lm = self._language_model
+        with lm._reasoning_lock:
+            traces = list(lm._reasoning_traces)
+            lm._reasoning_traces.clear()
+        return traces

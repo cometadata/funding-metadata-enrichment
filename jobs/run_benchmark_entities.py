@@ -115,6 +115,12 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Parallel extraction workers (online mode only; forced to 1 for offline)",
     )
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        default=False,
+        help="Enable Qwen3 thinking mode (adds reasoning parser for online, strips tags for offline)",
+    )
     return parser.parse_args()
 
 
@@ -166,9 +172,11 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     port = getattr(args, "server_port", 8000)
     lora_path = getattr(args, "lora_path", None)
     lora_name = getattr(args, "lora_name", None)
+    enable_thinking = getattr(args, "enable_thinking", False)
 
     lora_path_val = f'"{lora_path}"' if lora_path else "null"
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
+    enable_thinking_val = "true" if enable_thinking else "false"
 
     config_content = (
         f'model: "{model_id}"\n'
@@ -190,8 +198,11 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"  timeout: 120\n"
         f"\n"
         f"sampling:\n"
-        f"  temperature: 0.1\n"
+        f"  temperature: 0.7\n"
+        f"  top_p: 0.8\n"
+        f"  top_k: 20\n"
         f"  max_tokens: 4096\n"
+        f"  enable_thinking: {enable_thinking_val}\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)
@@ -205,6 +216,7 @@ def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Pop
     port = getattr(args, "server_port", 8000)
     lora_path = getattr(args, "lora_path", None)
     lora_name = getattr(args, "lora_name", None)
+    enable_thinking = getattr(args, "enable_thinking", False)
 
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
@@ -214,6 +226,8 @@ def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Pop
         "--gpu-memory-utilization", str(args.gpu_memory_utilization),
         "--dtype", "auto",
     ]
+    if enable_thinking:
+        cmd.extend(["--reasoning-parser", "qwen3"])
     if lora_path:
         adapter_name = lora_name or "default"
         cmd.extend([
@@ -321,23 +335,25 @@ def run_stage2(
                     work_items.append((doc_idx, stmt_data["statement"]))
 
             doc_funders: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            doc_reasoning: dict[int, list[str]] = defaultdict(list)
 
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=workers
             ) as executor:
                 future_to_item = {
                     executor.submit(
-                        service.extract_entities, stmt_text
+                        service.extract_entities_with_reasoning, stmt_text
                     ): (doc_idx, stmt_text)
                     for doc_idx, stmt_text in work_items
                 }
                 for future in concurrent.futures.as_completed(future_to_item):
                     doc_idx, stmt_text = future_to_item[future]
                     try:
-                        extraction = future.result()
+                        extraction, reasoning = future.result()
                         doc_funders[doc_idx].extend(
                             _funders_from_extraction(extraction)
                         )
+                        doc_reasoning[doc_idx].extend(reasoning)
                     except Exception:
                         logger.exception(
                             "Stage 2 failed for doi=%s statement=%.80s",
@@ -356,6 +372,7 @@ def run_stage2(
                 {
                     "doi": doc["doi"],
                     "funders": doc_funders.get(doc_idx, []),
+                    "reasoning": doc_reasoning.get(doc_idx, []),
                 }
                 for doc_idx, doc in enumerate(split_results)
             ]
@@ -366,14 +383,20 @@ def run_stage2(
             for doc in split_results:
                 doi = doc["doi"]
                 all_funders: list[dict[str, Any]] = []
+                all_reasoning: list[str] = []
 
                 for stmt_data in doc["statements"]:
                     statement_text = stmt_data["statement"]
                     try:
-                        extraction = service.extract_entities(statement_text)
+                        extraction, reasoning = (
+                            service.extract_entities_with_reasoning(
+                                statement_text
+                            )
+                        )
                         all_funders.extend(
                             _funders_from_extraction(extraction)
                         )
+                        all_reasoning.extend(reasoning)
                     except Exception:
                         logger.exception(
                             "Stage 2 failed for doi=%s statement=%.80s",
@@ -389,7 +412,11 @@ def run_stage2(
                             total_statements,
                         )
 
-                entity_results.append({"doi": doi, "funders": all_funders})
+                entity_results.append({
+                    "doi": doi,
+                    "funders": all_funders,
+                    "reasoning": all_reasoning,
+                })
 
         logger.info(
             "Stage 2 [%s]: finished %d documents", split, len(entity_results)

@@ -24,8 +24,11 @@ class VLLMEngineConfig:
 
 @dataclass
 class VLLMSamplingConfig:
-    temperature: float = 0.1
+    temperature: float = 0.7
+    top_p: float = 0.8
+    top_k: int = 20
     max_tokens: int = 4096
+    enable_thinking: bool = False
 
 
 @dataclass

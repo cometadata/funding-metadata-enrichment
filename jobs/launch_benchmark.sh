@@ -16,16 +16,18 @@ MODE="offline"
 LORA_PATH=""
 LORA_NAME=""
 WORKERS=1
+ENABLE_THINKING=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --stages)     STAGES="$2"; shift 2 ;;
-        --flavor)     FLAVOR="$2"; shift 2 ;;
-        --model)      MODEL="$2"; shift 2 ;;
-        --mode)       MODE="$2"; shift 2 ;;
-        --lora-path)  LORA_PATH="$2"; shift 2 ;;
-        --lora-name)  LORA_NAME="$2"; shift 2 ;;
-        --workers)    WORKERS="$2"; shift 2 ;;
+        --stages)           STAGES="$2"; shift 2 ;;
+        --flavor)           FLAVOR="$2"; shift 2 ;;
+        --model)            MODEL="$2"; shift 2 ;;
+        --mode)             MODE="$2"; shift 2 ;;
+        --lora-path)        LORA_PATH="$2"; shift 2 ;;
+        --lora-name)        LORA_NAME="$2"; shift 2 ;;
+        --workers)          WORKERS="$2"; shift 2 ;;
+        --enable-thinking)  ENABLE_THINKING="1"; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -47,6 +49,7 @@ case "$STAGES" in
         SCRIPT_ARGS="--model-id ${MODEL} --mode ${MODE} --workers ${WORKERS}"
         [[ -n "$LORA_PATH" ]] && SCRIPT_ARGS+=" --lora-path ${LORA_PATH}"
         [[ -n "$LORA_NAME" ]] && SCRIPT_ARGS+=" --lora-name ${LORA_NAME}"
+        [[ -n "$ENABLE_THINKING" ]] && SCRIPT_ARGS+=" --enable-thinking"
         ;;
     *)
         echo "Error: --stages must be 'statements' or 'entities'" >&2
@@ -62,6 +65,7 @@ if [[ "$STAGES" == "entities" ]]; then
     echo "  Mode:   ${MODE}"
     echo "  Workers: ${WORKERS}"
     [[ -n "$LORA_PATH" ]] && echo "  LoRA:   ${LORA_NAME:-default} (${LORA_PATH})"
+    [[ -n "$ENABLE_THINKING" ]] && echo "  Thinking: enabled"
 fi
 echo "  Script: $(basename "$SCRIPT")"
 

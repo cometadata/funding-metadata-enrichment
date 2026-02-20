@@ -58,8 +58,25 @@ def test_load_minimal_config(tmp_path):
     assert config.engine.dtype == "auto"
     assert config.engine.quantization is None
     assert config.engine.enable_prefix_caching is True
-    assert config.sampling.temperature == 0.1
+    assert config.sampling.temperature == 0.7
+    assert config.sampling.top_p == 0.8
+    assert config.sampling.top_k == 20
     assert config.sampling.max_tokens == 4096
+
+
+def test_load_minimal_config_enable_thinking_default(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.enable_thinking is False
+
+
+def test_load_config_enable_thinking_true(tmp_path):
+    data = {
+        "model": "some-model",
+        "sampling": {"enable_thinking": True},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.enable_thinking is True
 
 
 def test_load_config_model_override(tmp_path):

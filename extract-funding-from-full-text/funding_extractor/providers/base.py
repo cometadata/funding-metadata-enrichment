@@ -73,6 +73,10 @@ class BaseProvider(ABC):
     @abstractmethod
     def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]: ...
 
+    def drain_reasoning(self) -> List[str]:
+        """Return and clear accumulated reasoning traces. Default: no traces."""
+        return []
+
     def extract(self, statement: str, prompt: str, examples: List[Any]) -> ExtractionResult:
         params = self.build_extract_params(statement, prompt, examples)
         return self._execute_extract(params, statement)
