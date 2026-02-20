@@ -121,6 +121,11 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Enable Qwen3 thinking mode (adds reasoning parser for online, strips tags for offline)",
     )
+    parser.add_argument(
+        "--config-name",
+        default="entities",
+        help="HuggingFace dataset config name for push_to_hub (default: entities)",
+    )
     return parser.parse_args()
 
 
@@ -429,13 +434,14 @@ def run_stage2(
 def push_entities(
     results_by_split: dict[str, list[dict[str, Any]]],
     output_dataset: str,
+    config_name: str = "entities",
 ) -> None:
     entities_dd = DatasetDict({
         split: Dataset.from_list(rows)
         for split, rows in results_by_split.items()
     })
-    logger.info("Pushing entities config to %s", output_dataset)
-    entities_dd.push_to_hub(output_dataset, config_name="entities")
+    logger.info("Pushing config '%s' to %s", config_name, output_dataset)
+    entities_dd.push_to_hub(output_dataset, config_name=config_name)
 
 
 def main() -> None:
@@ -489,7 +495,7 @@ def main() -> None:
         )
 
     logger.info("=== Pushing to HuggingFace Hub ===")
-    push_entities(results, args.output_dataset)
+    push_entities(results, args.output_dataset, config_name=args.config_name)
 
     elapsed = time.time() - t0
     logger.info("Done in %.1f minutes", elapsed / 60)
