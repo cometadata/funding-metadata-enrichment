@@ -129,7 +129,11 @@ class VLLMLanguageModel(BaseLanguageModel):
             yield [ScoredOutput(score=1.0, output=raw_text)]
 
 
-def _patch_client_for_thinking(language_model: Any, enable_thinking: bool) -> None:
+def _patch_client_for_thinking(
+    language_model: Any,
+    enable_thinking: bool,
+    thinking_budget: Optional[int] = None,
+) -> None:
     """Wrap the OpenAI client's create method to inject chat_template_kwargs
     for Qwen3 thinking control and capture reasoning content from responses."""
     original_create = language_model._client.chat.completions.create
@@ -138,6 +142,8 @@ def _patch_client_for_thinking(language_model: Any, enable_thinking: bool) -> No
     def patched_create(**kwargs):
         extra_body = kwargs.pop("extra_body", {}) or {}
         extra_body["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+        if enable_thinking and thinking_budget is not None:
+            extra_body["thinking_token_budget"] = thinking_budget
         kwargs["extra_body"] = extra_body
         response = original_create(**kwargs)
         if enable_thinking and response.choices:
@@ -215,7 +221,11 @@ class VLLMProvider(BaseProvider):
         # (Qwen3 defaults to thinking-on, so we must set it even when disabling)
         lm._reasoning_traces = []
         lm._reasoning_lock = threading.Lock()
-        _patch_client_for_thinking(lm, self._vllm_config.sampling.enable_thinking)
+        _patch_client_for_thinking(
+            lm,
+            self._vllm_config.sampling.enable_thinking,
+            thinking_budget=self._vllm_config.sampling.thinking_budget,
+        )
 
         return lm
 

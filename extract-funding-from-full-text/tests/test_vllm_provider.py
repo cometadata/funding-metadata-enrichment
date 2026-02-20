@@ -609,6 +609,94 @@ class TestVLLMThinkingOnline:
 
                 assert lm._reasoning_traces == ["I need to extract funders"]
 
+    def test_online_injects_thinking_budget(self, tmp_path):
+        """Patched client should inject thinking_token_budget in extra_body."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {
+                        "enable_thinking": True,
+                        "thinking_budget": 4096,
+                    },
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_model = MagicMock()
+                mock_openai_lm.return_value = mock_model
+
+                mock_response = MagicMock()
+                mock_response.choices = [MagicMock()]
+                mock_response.choices[0].message.reasoning = None
+                mock_response.choices[0].message.reasoning_content = None
+                mock_model._client.chat.completions.create.return_value = (
+                    mock_response
+                )
+                original_create = mock_model._client.chat.completions.create
+
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                lm = provider._language_model
+
+                lm._client.chat.completions.create(
+                    model="test-model", messages=[]
+                )
+
+                call_kwargs = original_create.call_args[1]
+                assert call_kwargs["extra_body"]["thinking_token_budget"] == 4096
+                assert call_kwargs["extra_body"]["chat_template_kwargs"] == {
+                    "enable_thinking": True
+                }
+
+    def test_online_no_thinking_budget_when_none(self, tmp_path):
+        """When thinking_budget is None, extra_body should not include it."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"enable_thinking": True},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_model = MagicMock()
+                mock_openai_lm.return_value = mock_model
+
+                mock_response = MagicMock()
+                mock_response.choices = [MagicMock()]
+                mock_response.choices[0].message.reasoning = None
+                mock_response.choices[0].message.reasoning_content = None
+                mock_model._client.chat.completions.create.return_value = (
+                    mock_response
+                )
+                original_create = mock_model._client.chat.completions.create
+
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                lm = provider._language_model
+
+                lm._client.chat.completions.create(
+                    model="test-model", messages=[]
+                )
+
+                call_kwargs = original_create.call_args[1]
+                assert "thinking_token_budget" not in call_kwargs["extra_body"]
+
     def test_online_disabled_does_not_capture(self, tmp_path):
         """When thinking is disabled, reasoning should not be captured."""
         mocks = _make_mock_vllm()

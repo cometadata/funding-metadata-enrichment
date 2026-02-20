@@ -150,6 +150,21 @@ def test_load_config_server_url_override(tmp_path):
     assert config.server.url == "http://new:9000/v1"
 
 
+def test_load_config_thinking_budget_default(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.thinking_budget is None
+
+
+def test_load_config_thinking_budget_set(tmp_path):
+    data = {
+        "model": "some-model",
+        "sampling": {"thinking_budget": 4096},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.thinking_budget == 4096
+
+
 def test_server_config_defaults():
     sc = VLLMServerConfig()
     assert sc.url is None

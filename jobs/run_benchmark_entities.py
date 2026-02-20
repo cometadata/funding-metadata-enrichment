@@ -80,8 +80,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=16384,
+        default=32768,
         help="vLLM max model context length",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=16384,
+        help="Max generation tokens (thinking + response combined)",
     )
     parser.add_argument(
         "--gpu-memory-utilization",
@@ -120,6 +126,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Enable Qwen3 thinking mode (adds reasoning parser for online, strips tags for offline)",
+    )
+    parser.add_argument(
+        "--thinking-budget",
+        type=int,
+        default=None,
+        help="Cap thinking tokens (online mode only); must be less than --max-tokens",
     )
     parser.add_argument(
         "--config-name",
@@ -178,10 +190,12 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     lora_path = getattr(args, "lora_path", None)
     lora_name = getattr(args, "lora_name", None)
     enable_thinking = getattr(args, "enable_thinking", False)
+    thinking_budget = getattr(args, "thinking_budget", None)
 
     lora_path_val = f'"{lora_path}"' if lora_path else "null"
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
     enable_thinking_val = "true" if enable_thinking else "false"
+    thinking_budget_val = str(thinking_budget) if thinking_budget is not None else "null"
 
     config_content = (
         f'model: "{model_id}"\n'
@@ -206,8 +220,9 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"  temperature: 0.7\n"
         f"  top_p: 0.8\n"
         f"  top_k: 20\n"
-        f"  max_tokens: 4096\n"
+        f"  max_tokens: {args.max_tokens}\n"
         f"  enable_thinking: {enable_thinking_val}\n"
+        f"  thinking_budget: {thinking_budget_val}\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)

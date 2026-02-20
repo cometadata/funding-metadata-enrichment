@@ -18,6 +18,8 @@ LORA_NAME=""
 WORKERS=1
 ENABLE_THINKING=""
 CONFIG_NAME=""
+MAX_TOKENS=""
+THINKING_BUDGET=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,6 +32,8 @@ while [[ $# -gt 0 ]]; do
         --workers)          WORKERS="$2"; shift 2 ;;
         --enable-thinking)  ENABLE_THINKING="1"; shift ;;
         --config-name)      CONFIG_NAME="$2"; shift 2 ;;
+        --max-tokens)       MAX_TOKENS="$2"; shift 2 ;;
+        --thinking-budget)  THINKING_BUDGET="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -53,6 +57,8 @@ case "$STAGES" in
         [[ -n "$LORA_NAME" ]] && SCRIPT_ARGS+=" --lora-name ${LORA_NAME}"
         [[ -n "$ENABLE_THINKING" ]] && SCRIPT_ARGS+=" --enable-thinking"
         [[ -n "$CONFIG_NAME" ]] && SCRIPT_ARGS+=" --config-name ${CONFIG_NAME}"
+        [[ -n "$MAX_TOKENS" ]] && SCRIPT_ARGS+=" --max-tokens ${MAX_TOKENS}"
+        [[ -n "$THINKING_BUDGET" ]] && SCRIPT_ARGS+=" --thinking-budget ${THINKING_BUDGET}"
         ;;
     *)
         echo "Error: --stages must be 'statements' or 'entities'" >&2
@@ -69,6 +75,8 @@ if [[ "$STAGES" == "entities" ]]; then
     echo "  Workers: ${WORKERS}"
     [[ -n "$LORA_PATH" ]] && echo "  LoRA:   ${LORA_NAME:-default} (${LORA_PATH})"
     [[ -n "$ENABLE_THINKING" ]] && echo "  Thinking: enabled"
+    [[ -n "$THINKING_BUDGET" ]] && echo "  Thinking budget: ${THINKING_BUDGET}"
+    [[ -n "$MAX_TOKENS" ]] && echo "  Max tokens: ${MAX_TOKENS}"
     [[ -n "$CONFIG_NAME" ]] && echo "  Config: ${CONFIG_NAME}"
 fi
 echo "  Script: $(basename "$SCRIPT")"
