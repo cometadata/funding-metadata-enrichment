@@ -15,6 +15,7 @@ MODEL="Qwen/Qwen3-8B"
 MODE="offline"
 LORA_PATH=""
 LORA_NAME=""
+WORKERS=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
         --mode)       MODE="$2"; shift 2 ;;
         --lora-path)  LORA_PATH="$2"; shift 2 ;;
         --lora-name)  LORA_NAME="$2"; shift 2 ;;
+        --workers)    WORKERS="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -42,7 +44,7 @@ case "$STAGES" in
         ;;
     entities)
         SCRIPT="${SCRIPT_DIR}/run_benchmark_entities.py"
-        SCRIPT_ARGS="--model-id ${MODEL} --mode ${MODE}"
+        SCRIPT_ARGS="--model-id ${MODEL} --mode ${MODE} --workers ${WORKERS}"
         [[ -n "$LORA_PATH" ]] && SCRIPT_ARGS+=" --lora-path ${LORA_PATH}"
         [[ -n "$LORA_NAME" ]] && SCRIPT_ARGS+=" --lora-name ${LORA_NAME}"
         ;;
@@ -58,6 +60,7 @@ echo "  Flavor: ${FLAVOR}"
 if [[ "$STAGES" == "entities" ]]; then
     echo "  Model:  ${MODEL}"
     echo "  Mode:   ${MODE}"
+    echo "  Workers: ${WORKERS}"
     [[ -n "$LORA_PATH" ]] && echo "  LoRA:   ${LORA_NAME:-default} (${LORA_PATH})"
 fi
 echo "  Script: $(basename "$SCRIPT")"

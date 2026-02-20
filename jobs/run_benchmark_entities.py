@@ -25,6 +25,7 @@ Usage (local):
 """
 
 import argparse
+import concurrent.futures
 import logging
 import os
 import subprocess
@@ -32,6 +33,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from collections import defaultdict
 from typing import Any, Optional
 
 import torch
@@ -106,6 +108,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=8000,
         help="Port for vLLM server in online mode (default: 8000)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel extraction workers (online mode only; forced to 1 for offline)",
     )
     return parser.parse_args()
 
@@ -248,12 +256,40 @@ def stop_vllm_server(proc: subprocess.Popen) -> None:
             proc.wait()
 
 
+def _funders_from_extraction(extraction) -> list[dict[str, Any]]:
+    """Convert an ExtractionResult's funders to serializable dicts."""
+    return [
+        {
+            "funder_name": funder.funder_name or "",
+            "awards": [
+                {
+                    "funding_scheme": award.funding_scheme,
+                    "award_ids": award.award_ids,
+                    "award_title": award.award_title,
+                }
+                for award in funder.awards
+            ],
+        }
+        for funder in extraction.funders
+    ]
+
+
 def run_stage2(
     statements_by_split: dict[str, list[dict[str, Any]]],
     model_id: str,
     vllm_config_path: str,
+    workers: int = 1,
+    mode: str = "offline",
 ) -> dict[str, list[dict[str, Any]]]:
     """Run vLLM entity extraction on all statements."""
+    if mode == "offline" and workers > 1:
+        logger.warning(
+            "Forcing workers=1 for offline mode "
+            "(in-process vLLM handles its own batching)"
+        )
+        workers = 1
+    workers = max(1, workers)
+
     provider_settings = build_provider_settings(
         provider="vllm",
         model_id=model_id,
@@ -267,50 +303,93 @@ def run_stage2(
         for split_results in statements_by_split.values()
         for doc in split_results
     )
-    logger.info("Stage 2: %d total statements to process", total_statements)
+    logger.info(
+        "Stage 2: %d total statements to process (workers=%d)",
+        total_statements,
+        workers,
+    )
 
     results_by_split: dict[str, list[dict[str, Any]]] = {}
     processed = 0
 
     for split, split_results in statements_by_split.items():
-        entity_results: list[dict[str, Any]] = []
+        if workers > 1:
+            # Parallel path: flatten all statements, process concurrently
+            work_items: list[tuple[int, str]] = []
+            for doc_idx, doc in enumerate(split_results):
+                for stmt_data in doc["statements"]:
+                    work_items.append((doc_idx, stmt_data["statement"]))
 
-        for doc in split_results:
-            doi = doc["doi"]
-            all_funders: list[dict[str, Any]] = []
+            doc_funders: dict[int, list[dict[str, Any]]] = defaultdict(list)
 
-            for stmt_data in doc["statements"]:
-                statement_text = stmt_data["statement"]
-                try:
-                    extraction = service.extract_entities(statement_text)
-                    for funder in extraction.funders:
-                        all_funders.append({
-                            "funder_name": funder.funder_name or "",
-                            "awards": [
-                                {
-                                    "funding_scheme": award.funding_scheme,
-                                    "award_ids": award.award_ids,
-                                    "award_title": award.award_title,
-                                }
-                                for award in funder.awards
-                            ],
-                        })
-                except Exception:
-                    logger.exception(
-                        "Stage 2 failed for doi=%s statement=%.80s",
-                        doi,
-                        statement_text,
-                    )
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=workers
+            ) as executor:
+                future_to_item = {
+                    executor.submit(
+                        service.extract_entities, stmt_text
+                    ): (doc_idx, stmt_text)
+                    for doc_idx, stmt_text in work_items
+                }
+                for future in concurrent.futures.as_completed(future_to_item):
+                    doc_idx, stmt_text = future_to_item[future]
+                    try:
+                        extraction = future.result()
+                        doc_funders[doc_idx].extend(
+                            _funders_from_extraction(extraction)
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Stage 2 failed for doi=%s statement=%.80s",
+                            split_results[doc_idx]["doi"],
+                            stmt_text,
+                        )
+                    processed += 1
+                    if processed % 50 == 0:
+                        logger.info(
+                            "Stage 2: processed %d/%d statements",
+                            processed,
+                            total_statements,
+                        )
 
-                processed += 1
-                if processed % 50 == 0:
-                    logger.info(
-                        "Stage 2: processed %d/%d statements",
-                        processed,
-                        total_statements,
-                    )
+            entity_results = [
+                {
+                    "doi": doc["doi"],
+                    "funders": doc_funders.get(doc_idx, []),
+                }
+                for doc_idx, doc in enumerate(split_results)
+            ]
+        else:
+            # Sequential path: existing behaviour, zero overhead
+            entity_results: list[dict[str, Any]] = []
 
-            entity_results.append({"doi": doi, "funders": all_funders})
+            for doc in split_results:
+                doi = doc["doi"]
+                all_funders: list[dict[str, Any]] = []
+
+                for stmt_data in doc["statements"]:
+                    statement_text = stmt_data["statement"]
+                    try:
+                        extraction = service.extract_entities(statement_text)
+                        all_funders.extend(
+                            _funders_from_extraction(extraction)
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Stage 2 failed for doi=%s statement=%.80s",
+                            doi,
+                            statement_text,
+                        )
+
+                    processed += 1
+                    if processed % 50 == 0:
+                        logger.info(
+                            "Stage 2: processed %d/%d statements",
+                            processed,
+                            total_statements,
+                        )
+
+                entity_results.append({"doi": doi, "funders": all_funders})
 
         logger.info(
             "Stage 2 [%s]: finished %d documents", split, len(entity_results)
@@ -365,6 +444,8 @@ def main() -> None:
             statements_by_split=statements,
             model_id=args.model_id,
             vllm_config_path=vllm_config_path,
+            workers=args.workers,
+            mode=mode,
         )
     finally:
         if server_proc is not None:
