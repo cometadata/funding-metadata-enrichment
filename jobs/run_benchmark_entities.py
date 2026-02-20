@@ -196,6 +196,7 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
     enable_thinking_val = "true" if enable_thinking else "false"
     thinking_budget_val = str(thinking_budget) if thinking_budget is not None else "null"
+    extraction_timeout = 300 if enable_thinking else 120
 
     config_content = (
         f'model: "{model_id}"\n'
@@ -214,7 +215,7 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"\n"
         f"server:\n"
         f'  url: "http://localhost:{port}/v1"\n'
-        f"  timeout: 120\n"
+        f"  timeout: {extraction_timeout}\n"
         f"\n"
         f"sampling:\n"
         f"  temperature: 0.7\n"

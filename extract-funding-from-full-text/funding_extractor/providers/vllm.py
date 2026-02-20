@@ -193,6 +193,8 @@ class VLLMProvider(BaseProvider):
             mode_override=mode_override,
             server_url_override=server_url_override,
         )
+        if self._vllm_config.server.timeout:
+            self.timeout = self._vllm_config.server.timeout
         if self._vllm_config.mode == "online":
             self._language_model = self._build_online_model()
         else:

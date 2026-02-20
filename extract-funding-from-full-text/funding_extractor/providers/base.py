@@ -82,14 +82,21 @@ class BaseProvider(ABC):
         return self._execute_extract(params, statement)
 
     def _execute_extract(self, extract_params: Dict[str, Any], statement: str) -> ExtractionResult:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(lx.extract, **extract_params)
-                result = future.result(timeout=self.timeout)
-                return self._convert_extractions_to_result(result.extractions, statement)
+            future = executor.submit(lx.extract, **extract_params)
+            result = future.result(timeout=self.timeout)
+            return self._convert_extractions_to_result(result.extractions, statement)
         except concurrent.futures.TimeoutError:
-            logger.warning("Request timed out after %s seconds, returning empty result", self.timeout)
+            logger.warning(
+                "Request timed out after %s seconds for statement (%.80s...), "
+                "returning empty result (background thread may still be running)",
+                self.timeout,
+                statement,
+            )
             return ExtractionResult(statement=statement, funders=[])
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     @staticmethod
     def _convert_extractions_to_result(extractions: List[Any], funding_statement: str) -> ExtractionResult:
