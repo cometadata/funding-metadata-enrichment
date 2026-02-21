@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch, MagicMock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -135,3 +136,43 @@ def test_empty_extractions():
     result = BaseProvider._convert_extractions_to_result([], "stmt")
     assert result.funders == []
     assert result.statement == "stmt"
+
+
+class _StubProvider(BaseProvider):
+    """Minimal concrete provider for testing _execute_extract."""
+    @property
+    def provider(self):
+        return "stub"
+    def build_extract_params(self, statement, prompt, examples):
+        return {}
+
+
+def test_execute_extract_returns_empty_on_value_error():
+    """ValueError from resolver (e.g. model returns list instead of string) yields empty result."""
+    with patch("funding_extractor.providers.base.lx") as mock_lx:
+        mock_lx.extract.side_effect = ValueError(
+            "Extraction text must be a string, integer, or float."
+        )
+        provider = _StubProvider(model_id=None, model_url=None, api_key=None, timeout=30)
+        params = {"text_or_documents": "stmt", "model": MagicMock()}
+        result = provider._execute_extract(params, "stmt")
+        assert result.funders == []
+        assert result.statement == "stmt"
+
+
+def test_execute_extract_returns_empty_on_timeout():
+    """TimeoutError yields empty result (pre-existing behavior)."""
+    import threading
+
+    with patch("funding_extractor.providers.base.lx") as mock_lx:
+        event = threading.Event()
+        def block_forever(**kwargs):
+            event.wait()
+        mock_lx.extract.side_effect = block_forever
+
+        provider = _StubProvider(model_id=None, model_url=None, api_key=None, timeout=0.01)
+        params = {"text_or_documents": "stmt", "model": MagicMock()}
+        result = provider._execute_extract(params, "stmt")
+        event.set()
+        assert result.funders == []
+        assert result.statement == "stmt"

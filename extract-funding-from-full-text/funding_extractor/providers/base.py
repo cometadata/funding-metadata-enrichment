@@ -95,6 +95,13 @@ class BaseProvider(ABC):
                 statement,
             )
             return ExtractionResult(statement=statement, funders=[])
+        except ValueError as exc:
+            logger.warning(
+                "Resolver rejected model output for statement (%.80s...): %s",
+                statement,
+                exc,
+            )
+            return ExtractionResult(statement=statement, funders=[])
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
