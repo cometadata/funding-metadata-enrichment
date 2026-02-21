@@ -20,8 +20,42 @@ from funding_extractor.benchmark.report import (
     print_console_summary,
     save_report,
 )
-from funding_extractor.entities.models import FunderEntity
+from funding_extractor.entities.models import Award, FunderEntity
 from funding_extractor.models import ProcessingResults
+
+
+def load_hf_predictions(
+    dataset_id: str,
+    config_name: str,
+    split: str = "test",
+) -> Dict[str, Dict[str, Any]]:
+    """Load predictions from a HuggingFace dataset config pushed by the benchmark job."""
+    from datasets import load_dataset
+
+    if split == "both":
+        splits_to_load = ["train", "test"]
+    else:
+        splits_to_load = [split]
+
+    preds: Dict[str, Dict[str, Any]] = {}
+    for s in splits_to_load:
+        ds = load_dataset(dataset_id, config_name, split=s)
+        for row in ds:
+            doi = row["doi"]
+            funders: List[FunderEntity] = []
+            for f in row.get("funders", []):
+                awards = [
+                    Award(
+                        funding_scheme=a.get("funding_scheme", []),
+                        award_ids=a.get("award_ids", []),
+                        award_title=a.get("award_title", []),
+                    )
+                    for a in f.get("awards", [])
+                ]
+                funders.append(FunderEntity(funder_name=f.get("funder_name"), awards=awards))
+            preds[doi] = {"statements": [], "funders": funders}
+
+    return preds
 
 
 def load_precomputed_predictions(predictions_path: Path) -> Dict[str, Dict[str, Any]]:

@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from funding_extractor.benchmark.evaluator import run_benchmark
+from funding_extractor.benchmark.evaluator import load_hf_predictions, run_benchmark
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,6 +22,10 @@ Examples:
 
   # Verbose per-document breakdown
   %(prog)s --predictions results.json --threshold 0.8 --output-json report.json --verbose
+
+  # Evaluate predictions from a HuggingFace dataset config
+  %(prog)s --hf-predictions cometadata/funding-extraction-harness-benchmark \\
+    --hf-config qwen3-8b-entities-non-thinking --split both --output-json report.json
         """,
     )
 
@@ -37,9 +41,17 @@ Examples:
         help="Path to stage 1 JSONL output (evaluate statement extraction only)",
     )
     mode_group.add_argument(
+        "--hf-predictions",
+        help="HuggingFace dataset ID containing benchmark predictions (use with --hf-config)",
+    )
+    mode_group.add_argument(
         "--live",
         action="store_true",
         help="Run full extraction pipeline against HF dataset (not yet implemented)",
+    )
+    parser.add_argument(
+        "--hf-config",
+        help="HuggingFace dataset config name for --hf-predictions",
     )
 
     parser.add_argument(
@@ -91,6 +103,30 @@ Examples:
 
 def main() -> None:
     args = parse_args()
+
+    if args.hf_predictions:
+        if not args.hf_config:
+            print("Error: --hf-config is required when using --hf-predictions.")
+            sys.exit(1)
+
+        predictions = load_hf_predictions(
+            dataset_id=args.hf_predictions,
+            config_name=args.hf_config,
+            split=args.split,
+        )
+        run_benchmark(
+            dataset_id=args.dataset,
+            split=args.split,
+            max_samples=args.max_samples,
+            predictions=predictions,
+            threshold=args.threshold,
+            funder_threshold=args.funder_threshold,
+            id_match_mode=args.id_match_mode,
+            output_json=args.output_json,
+            verbose=args.verbose,
+            quiet=args.quiet,
+        )
+        return
 
     if args.statements_predictions:
         from funding_extractor.statements.io import read_statements_jsonl
