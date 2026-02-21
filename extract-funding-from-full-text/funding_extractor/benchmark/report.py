@@ -90,15 +90,17 @@ def push_metrics_to_hub(
         dataset_id: HuggingFace dataset ID.
         config_name: Config name for the pushed metrics.
     """
-    from datasets import Dataset
+    from datasets import Dataset, DatasetDict
 
-    rows = []
+    split_datasets = {}
     for split_name, report in reports.items():
+        rows = []
         for level, metrics in report["aggregate_metrics"].items():
-            rows.append({"split": split_name, "level": level, **metrics})
+            rows.append({"level": level, **metrics})
+        split_datasets[split_name] = Dataset.from_list(rows)
 
-    ds = Dataset.from_list(rows)
-    ds.push_to_hub(dataset_id, config_name=config_name)
+    dd = DatasetDict(split_datasets)
+    dd.push_to_hub(dataset_id, config_name=config_name)
 
 
 def _fmt(val: float) -> str:
