@@ -78,6 +78,29 @@ def save_report(report: Dict[str, Any], output_path: Path) -> None:
     output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
+def push_metrics_to_hub(
+    reports: Dict[str, Dict[str, Any]],
+    dataset_id: str,
+    config_name: str,
+) -> None:
+    """Push aggregate metrics to HuggingFace as a dataset config.
+
+    Args:
+        reports: Mapping of split name to report dict (e.g. {"train": ..., "test": ...}).
+        dataset_id: HuggingFace dataset ID.
+        config_name: Config name for the pushed metrics.
+    """
+    from datasets import Dataset
+
+    rows = []
+    for split_name, report in reports.items():
+        for level, metrics in report["aggregate_metrics"].items():
+            rows.append({"split": split_name, "level": level, **metrics})
+
+    ds = Dataset.from_list(rows)
+    ds.push_to_hub(dataset_id, config_name=config_name)
+
+
 def _fmt(val: float) -> str:
     return f"{val:.4f}"
 

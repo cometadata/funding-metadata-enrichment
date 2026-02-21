@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from funding_extractor.benchmark.evaluator import load_hf_predictions, run_benchmark
+from funding_extractor.benchmark.report import push_metrics_to_hub
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,6 +27,12 @@ Examples:
   # Evaluate predictions from a HuggingFace dataset config
   %(prog)s --hf-predictions cometadata/funding-extraction-harness-benchmark \\
     --hf-config qwen3-8b-entities-non-thinking --split both --output-json report.json
+
+  # Evaluate and push metrics to HuggingFace
+  %(prog)s --hf-predictions cometadata/funding-extraction-harness-benchmark \\
+    --hf-config qwen3-8b-entities-non-thinking --split both \\
+    --push-to-hub cometadata/funding-extraction-harness-benchmark \\
+    --push-config qwen3-8b-entities-non-thinking-metrics
         """,
     )
 
@@ -98,79 +105,108 @@ Examples:
     parser.add_argument("--verbose", action="store_true", help="Show per-document breakdown in report")
     parser.add_argument("--quiet", action="store_true", help="Suppress console output except errors")
 
+    parser.add_argument(
+        "--push-to-hub",
+        help="Push metrics to this HuggingFace dataset ID",
+    )
+    parser.add_argument(
+        "--push-config",
+        help="Config name for pushed metrics (required with --push-to-hub)",
+    )
+
     return parser.parse_args()
+
+
+def _benchmark_kwargs(args: argparse.Namespace, split: str) -> dict:
+    return dict(
+        dataset_id=args.dataset,
+        split=split,
+        max_samples=args.max_samples,
+        threshold=args.threshold,
+        funder_threshold=args.funder_threshold,
+        id_match_mode=args.id_match_mode,
+        verbose=args.verbose,
+        quiet=args.quiet,
+    )
+
+
+def _resolve_splits(split: str) -> list[str]:
+    return ["train", "test"] if split == "both" else [split]
+
+
+def _load_predictions(args: argparse.Namespace, split: str) -> dict:
+    """Load predictions for a single split based on the chosen mode."""
+    if args.hf_predictions:
+        return load_hf_predictions(
+            dataset_id=args.hf_predictions,
+            config_name=args.hf_config,
+            split=split,
+        )
+
+    if args.statements_predictions:
+        from collections import defaultdict
+
+        from funding_extractor.statements.io import read_statements_jsonl
+
+        grouped = defaultdict(list)
+        for record in read_statements_jsonl(args.statements_predictions):
+            grouped[record["document_id"]].append(record["statement"])
+        return {
+            doc_id: {"statements": stmts, "funders": []}
+            for doc_id, stmts in grouped.items()
+        }
+
+    # --predictions mode returns None; run_benchmark loads from file
+    return None
 
 
 def main() -> None:
     args = parse_args()
 
-    if args.hf_predictions:
-        if not args.hf_config:
-            print("Error: --hf-config is required when using --hf-predictions.")
-            sys.exit(1)
+    if args.push_to_hub and not args.push_config:
+        print("Error: --push-config is required when using --push-to-hub.")
+        sys.exit(1)
 
-        predictions = load_hf_predictions(
-            dataset_id=args.hf_predictions,
-            config_name=args.hf_config,
-            split=args.split,
-        )
-        run_benchmark(
-            dataset_id=args.dataset,
-            split=args.split,
-            max_samples=args.max_samples,
-            predictions=predictions,
-            threshold=args.threshold,
-            funder_threshold=args.funder_threshold,
-            id_match_mode=args.id_match_mode,
-            output_json=args.output_json,
-            verbose=args.verbose,
-            quiet=args.quiet,
-        )
-        return
-
-    if args.statements_predictions:
-        from funding_extractor.statements.io import read_statements_jsonl
-        from collections import defaultdict
-
-        grouped = defaultdict(list)
-        for record in read_statements_jsonl(args.statements_predictions):
-            grouped[record["document_id"]].append(record["statement"])
-
-        predictions = {
-            doc_id: {"statements": stmts, "funders": []}
-            for doc_id, stmts in grouped.items()
-        }
-
-        run_benchmark(
-            dataset_id=args.dataset,
-            split=args.split,
-            max_samples=args.max_samples,
-            predictions=predictions,
-            threshold=args.threshold,
-            funder_threshold=args.funder_threshold,
-            id_match_mode=args.id_match_mode,
-            output_json=args.output_json,
-            verbose=args.verbose,
-            quiet=args.quiet,
-        )
-        return
+    if args.hf_predictions and not args.hf_config:
+        print("Error: --hf-config is required when using --hf-predictions.")
+        sys.exit(1)
 
     if args.live:
         print("Error: --live mode is not yet implemented. Use --predictions with a pre-computed results file.")
         sys.exit(1)
 
-    run_benchmark(
-        dataset_id=args.dataset,
-        split=args.split,
-        max_samples=args.max_samples,
-        predictions_path=args.predictions,
-        threshold=args.threshold,
-        funder_threshold=args.funder_threshold,
-        id_match_mode=args.id_match_mode,
-        output_json=args.output_json,
-        verbose=args.verbose,
-        quiet=args.quiet,
-    )
+    splits = _resolve_splits(args.split)
+    reports: dict[str, dict] = {}
+
+    for split in splits:
+        predictions = _load_predictions(args, split)
+        kwargs = _benchmark_kwargs(args, split)
+
+        # Suffix output file with split name when evaluating multiple splits
+        output_json = None
+        if args.output_json:
+            if len(splits) > 1:
+                output_json = args.output_json.with_stem(
+                    f"{args.output_json.stem}_{split}"
+                )
+            else:
+                output_json = args.output_json
+
+        if predictions is not None:
+            report = run_benchmark(
+                predictions=predictions, output_json=output_json, **kwargs
+            )
+        else:
+            report = run_benchmark(
+                predictions_path=args.predictions, output_json=output_json, **kwargs
+            )
+
+        reports[split] = report
+
+    if reports and args.push_to_hub:
+        push_metrics_to_hub(reports, args.push_to_hub, args.push_config)
+        if not args.quiet:
+            print(f"Metrics pushed to {args.push_to_hub} (config: {args.push_config})")
 
 
 if __name__ == "__main__":
