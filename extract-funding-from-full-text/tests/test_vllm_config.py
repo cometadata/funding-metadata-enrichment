@@ -180,6 +180,21 @@ def test_extraction_passes_explicit(tmp_path):
     assert config.sampling.extraction_passes == 1
 
 
+def test_batch_length_default(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.batch_length == 64
+
+
+def test_batch_length_explicit(tmp_path):
+    data = {
+        "model": "some-model",
+        "sampling": {"batch_length": 32},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.batch_length == 32
+
+
 def test_server_config_defaults():
     sc = VLLMServerConfig()
     assert sc.url is None

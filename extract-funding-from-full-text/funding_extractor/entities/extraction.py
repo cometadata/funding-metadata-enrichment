@@ -1,5 +1,6 @@
+import logging
 import os
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import langextract as lx
 
@@ -10,10 +11,13 @@ from funding_extractor.config.loader import (
 from funding_extractor.config.settings import ProviderSettings
 from funding_extractor.entities.models import ExtractionResult
 from funding_extractor.providers.base import (
+    BaseProvider,
     ModelProvider,
     validate_provider_requirements,
 )
 from funding_extractor.providers.factory import ProviderFactory
+
+logger = logging.getLogger(__name__)
 
 
 def create_extraction_prompt(prompt_file: Optional[str] = None, custom_config_dir: Optional[str] = None) -> str:
@@ -100,6 +104,59 @@ class StructuredExtractionService:
         result = self._provider.extract(funding_statement, self.prompt, self.examples)
         reasoning = self._provider.drain_reasoning()
         return result, reasoning
+
+    def extract_entities_batch(
+        self, statements: List[Tuple[str, str]]
+    ) -> Tuple[Dict[str, ExtractionResult], List[str]]:
+        """Extract entities from multiple statements in a single batched call.
+
+        Uses langextract's multi-document batching to send batch_length prompts
+        per engine.generate() call, enabling GPU parallelism without threading.
+
+        Args:
+            statements: List of (doc_id, statement_text) tuples.
+
+        Returns:
+            Tuple of (dict mapping doc_id to ExtractionResult, reasoning traces).
+        """
+        if not statements:
+            return {}, []
+
+        documents = [
+            lx.data.Document(text=text, document_id=doc_id)
+            for doc_id, text in statements
+        ]
+        text_by_id = {doc_id: text for doc_id, text in statements}
+
+        # Build params using first statement as a template, then override
+        params = self._provider.build_extract_params(
+            statements[0][1], self.prompt, self.examples
+        )
+        params["text_or_documents"] = documents
+        params["show_progress"] = True
+
+        try:
+            annotated_docs = lx.extract(**params)
+        except ValueError:
+            logger.exception("Batch extraction failed")
+            return {doc_id: ExtractionResult(statement=text, funders=[])
+                    for doc_id, text in statements}, []
+
+        results: Dict[str, ExtractionResult] = {}
+        for ann_doc in annotated_docs:
+            doc_id = ann_doc.document_id
+            text = text_by_id.get(doc_id, "")
+            results[doc_id] = BaseProvider._convert_extractions_to_result(
+                ann_doc.extractions or [], text
+            )
+
+        # Fill in any missing documents with empty results
+        for doc_id, text in statements:
+            if doc_id not in results:
+                results[doc_id] = ExtractionResult(statement=text, funders=[])
+
+        reasoning = self._provider.drain_reasoning()
+        return results, reasoning
 
 
 def extract_structured_entities(

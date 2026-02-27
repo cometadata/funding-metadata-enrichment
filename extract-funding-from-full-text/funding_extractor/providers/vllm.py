@@ -252,6 +252,7 @@ class VLLMProvider(BaseProvider):
             "use_schema_constraints": False,
             "model": self._language_model,
             "resolver_params": {"suppress_parse_errors": True},
+            "batch_length": self._vllm_config.sampling.batch_length,
         }
 
     def drain_reasoning(self) -> list[str]:

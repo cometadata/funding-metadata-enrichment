@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=["offline", "online"],
-        default="offline",
+        default="online",
         help="vLLM inference mode: offline (in-process) or online (HTTP server)",
     )
     parser.add_argument(
@@ -339,7 +339,8 @@ def run_stage2(
     if mode == "offline" and workers > 1:
         logger.warning(
             "Forcing workers=1 for offline mode "
-            "(in-process vLLM handles its own batching)"
+            "(vLLM's in-process LLM.generate() is not thread-safe; "
+            "use --mode online for parallel workers)"
         )
         workers = 1
     workers = max(1, workers)
@@ -417,46 +418,43 @@ def run_stage2(
                 for doc_idx, doc in enumerate(split_results)
             ]
         else:
-            # Sequential path: existing behaviour, zero overhead
-            entity_results: list[dict[str, Any]] = []
-
-            for doc in split_results:
-                doi = doc["doi"]
-                all_funders: list[dict[str, Any]] = []
-                all_reasoning: list[str] = []
-
+            # Batch path: collect all statements, extract in one call
+            # so vLLM's engine.generate() processes batch_length prompts per GPU call
+            work_items: list[tuple[str, int, str]] = []
+            for doc_idx, doc in enumerate(split_results):
                 for stmt_data in doc["statements"]:
-                    statement_text = stmt_data["statement"]
-                    try:
-                        extraction, reasoning = (
-                            service.extract_entities_with_reasoning(
-                                statement_text
-                            )
-                        )
-                        all_funders.extend(
-                            _funders_from_extraction(extraction)
-                        )
-                        all_reasoning.extend(reasoning)
-                    except Exception:
-                        logger.exception(
-                            "Stage 2 failed for doi=%s statement=%.80s",
-                            doi,
-                            statement_text,
-                        )
+                    work_items.append(
+                        (f"{doc_idx}:{len(work_items)}", doc_idx, stmt_data["statement"])
+                    )
 
-                    processed += 1
-                    if processed % 50 == 0:
-                        logger.info(
-                            "Stage 2: processed %d/%d statements",
-                            processed,
-                            total_statements,
-                        )
+            logger.info(
+                "Stage 2 [%s]: batch extracting %d statements",
+                split,
+                len(work_items),
+            )
 
-                entity_results.append({
-                    "doi": doi,
-                    "funders": all_funders,
-                    "reasoning": all_reasoning,
-                })
+            batch_input = [(uid, text) for uid, _, text in work_items]
+            batch_results, batch_reasoning = service.extract_entities_batch(
+                batch_input
+            )
+
+            doc_funders: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            for uid, doc_idx, _ in work_items:
+                if uid in batch_results:
+                    doc_funders[doc_idx].extend(
+                        _funders_from_extraction(batch_results[uid])
+                    )
+
+            processed += len(work_items)
+
+            entity_results = [
+                {
+                    "doi": doc["doi"],
+                    "funders": doc_funders.get(doc_idx, []),
+                    "reasoning": batch_reasoning if doc_idx == 0 else [],
+                }
+                for doc_idx, doc in enumerate(split_results)
+            ]
 
         logger.info(
             "Stage 2 [%s]: finished %d documents", split, len(entity_results)

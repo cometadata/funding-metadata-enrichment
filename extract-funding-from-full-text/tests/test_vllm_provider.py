@@ -285,6 +285,44 @@ class TestVLLMProvider:
             assert provider.provider == ModelProvider.VLLM
 
 
+    def test_build_extract_params_includes_batch_length(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "sampling": {"batch_length": 32},
+                }),
+                encoding="utf-8",
+            )
+
+            provider = VLLMProvider(vllm_config_path=str(config_path))
+            params = provider.build_extract_params(
+                "Funded by NSF.", "Extract funders.", []
+            )
+
+            assert params["batch_length"] == 32
+
+    def test_build_extract_params_batch_length_default(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({"model": "test-model"}), encoding="utf-8"
+            )
+
+            provider = VLLMProvider(vllm_config_path=str(config_path))
+            params = provider.build_extract_params(
+                "Funded by NSF.", "Extract funders.", []
+            )
+
+            assert params["batch_length"] == 64
+
     def test_build_extract_params_reads_extraction_passes_offline(self, tmp_path):
         mocks = _make_mock_vllm()
         with patch.dict(sys.modules, mocks):

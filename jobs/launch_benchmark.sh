@@ -8,14 +8,15 @@ set -euo pipefail
 #   ./launch_benchmark.sh --stages entities --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --mode online --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --model Qwen/Qwen3-8B --lora-path /path --lora-name adapter
+#   ./launch_benchmark.sh --stages metrics --config-name qwen3-8b-entities-thinking --flavor cpu-basic
 
 STAGES=""
 FLAVOR="l4x1"
 MODEL="Qwen/Qwen3-8B"
-MODE="offline"
+MODE="online"
 LORA_PATH=""
 LORA_NAME=""
-WORKERS=1
+WORKERS=64
 ENABLE_THINKING=""
 CONFIG_NAME=""
 MAX_TOKENS=""
@@ -41,11 +42,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$STAGES" ]]; then
-    echo "Error: --stages is required (statements or entities)" >&2
+    echo "Error: --stages is required (statements, entities, or metrics)" >&2
     exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DATASET="cometadata/funding-extraction-harness-benchmark"
 
 case "$STAGES" in
     statements)
@@ -63,13 +65,22 @@ case "$STAGES" in
         [[ -n "$THINKING_BUDGET" ]] && SCRIPT_ARGS+=" --thinking-budget ${THINKING_BUDGET}"
         [[ -n "$EXTRACTION_PASSES" ]] && SCRIPT_ARGS+=" --extraction-passes ${EXTRACTION_PASSES}"
         ;;
+    metrics)
+        if [[ -z "$CONFIG_NAME" ]]; then
+            echo "Error: --config-name is required for metrics stage" >&2
+            exit 1
+        fi
+        SCRIPT="${SCRIPT_DIR}/run_benchmark_metrics.py"
+        SCRIPT_ARGS="--hf-predictions ${DATASET} --hf-config ${CONFIG_NAME} --split both"
+        SCRIPT_ARGS+=" --push-to-hub ${DATASET} --push-config ${CONFIG_NAME}-metrics"
+        ;;
     *)
-        echo "Error: --stages must be 'statements' or 'entities'" >&2
+        echo "Error: --stages must be 'statements', 'entities', or 'metrics'" >&2
         exit 1
         ;;
 esac
 
-echo "Launching benchmark extraction job:"
+echo "Launching benchmark job:"
 echo "  Stage:  ${STAGES}"
 echo "  Flavor: ${FLAVOR}"
 if [[ "$STAGES" == "entities" ]]; then
@@ -82,6 +93,10 @@ if [[ "$STAGES" == "entities" ]]; then
     [[ -n "$MAX_TOKENS" ]] && echo "  Max tokens: ${MAX_TOKENS}"
     [[ -n "$EXTRACTION_PASSES" ]] && echo "  Extraction passes: ${EXTRACTION_PASSES}"
     [[ -n "$CONFIG_NAME" ]] && echo "  Config: ${CONFIG_NAME}"
+fi
+if [[ "$STAGES" == "metrics" ]]; then
+    echo "  Config: ${CONFIG_NAME}"
+    echo "  Push:   ${DATASET} (config: ${CONFIG_NAME}-metrics)"
 fi
 echo "  Script: $(basename "$SCRIPT")"
 

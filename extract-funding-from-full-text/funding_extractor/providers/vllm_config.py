@@ -32,6 +32,7 @@ class VLLMSamplingConfig:
     thinking_budget: Optional[int] = None
     presence_penalty: float = 0.0
     extraction_passes: int = 3
+    batch_length: int = 64
 
 
 @dataclass

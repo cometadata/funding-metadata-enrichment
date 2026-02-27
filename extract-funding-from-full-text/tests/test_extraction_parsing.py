@@ -176,3 +176,85 @@ def test_execute_extract_returns_empty_on_timeout():
         event.set()
         assert result.funders == []
         assert result.statement == "stmt"
+
+
+class TestExtractEntitiesBatch:
+    def _make_service(self):
+        """Create a StructuredExtractionService with mocked provider."""
+        from funding_extractor.entities.extraction import StructuredExtractionService
+
+        mock_provider = MagicMock()
+        mock_provider.build_extract_params.return_value = {
+            "text_or_documents": "placeholder",
+            "prompt_description": "prompt",
+            "examples": [],
+            "model": MagicMock(),
+        }
+        mock_provider.drain_reasoning.return_value = ["trace1"]
+
+        service = StructuredExtractionService.__new__(StructuredExtractionService)
+        service.prompt = "Extract funders."
+        service.examples = []
+        service._provider = mock_provider
+        return service, mock_provider
+
+    def test_batch_empty_statements(self):
+        service, _ = self._make_service()
+        results, reasoning = service.extract_entities_batch([])
+        assert results == {}
+        assert reasoning == []
+
+    @patch("funding_extractor.entities.extraction.lx")
+    def test_batch_returns_per_document_results(self, mock_lx):
+        service, mock_provider = self._make_service()
+
+        # Mock annotated documents returned by lx.extract
+        ann_doc1 = SimpleNamespace(
+            document_id="doc1",
+            extractions=[_ext("funder_name", "NSF")],
+        )
+        ann_doc2 = SimpleNamespace(
+            document_id="doc2",
+            extractions=[_ext("funder_name", "NIH")],
+        )
+        mock_lx.extract.return_value = [ann_doc1, ann_doc2]
+
+        statements = [("doc1", "Funded by NSF"), ("doc2", "Funded by NIH")]
+        results, reasoning = service.extract_entities_batch(statements)
+
+        assert "doc1" in results
+        assert "doc2" in results
+        assert results["doc1"].funders[0].funder_name == "NSF"
+        assert results["doc2"].funders[0].funder_name == "NIH"
+        assert reasoning == ["trace1"]
+
+    @patch("funding_extractor.entities.extraction.lx")
+    def test_batch_fills_missing_documents(self, mock_lx):
+        service, _ = self._make_service()
+
+        # Only return one document from lx.extract
+        ann_doc1 = SimpleNamespace(
+            document_id="doc1",
+            extractions=[_ext("funder_name", "NSF")],
+        )
+        mock_lx.extract.return_value = [ann_doc1]
+
+        statements = [("doc1", "Funded by NSF"), ("doc2", "Funded by NIH")]
+        results, _ = service.extract_entities_batch(statements)
+
+        assert "doc1" in results
+        assert "doc2" in results
+        assert results["doc2"].funders == []
+
+    @patch("funding_extractor.entities.extraction.lx")
+    def test_batch_handles_value_error(self, mock_lx):
+        service, _ = self._make_service()
+        mock_lx.extract.side_effect = ValueError("bad output")
+
+        statements = [("doc1", "Funded by NSF"), ("doc2", "Funded by NIH")]
+        results, reasoning = service.extract_entities_batch(statements)
+
+        assert len(results) == 2
+        assert results["doc1"].funders == []
+        assert results["doc2"].funders == []
+        assert reasoning == []
