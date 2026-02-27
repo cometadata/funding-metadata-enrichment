@@ -165,6 +165,21 @@ def test_load_config_thinking_budget_set(tmp_path):
     assert config.sampling.thinking_budget == 4096
 
 
+def test_extraction_passes_default(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.extraction_passes == 3
+
+
+def test_extraction_passes_explicit(tmp_path):
+    data = {
+        "model": "some-model",
+        "sampling": {"extraction_passes": 1},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.sampling.extraction_passes == 1
+
+
 def test_server_config_defaults():
     sc = VLLMServerConfig()
     assert sc.url is None

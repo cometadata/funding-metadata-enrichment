@@ -238,8 +238,7 @@ class VLLMProvider(BaseProvider):
 
     def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]:
         is_online = self._vllm_config.mode == "online"
-        is_thinking = self._vllm_config.sampling.enable_thinking
-        extraction_passes = 3
+        extraction_passes = self._vllm_config.sampling.extraction_passes
         max_workers = extraction_passes if is_online else 1
         return {
             "text_or_documents": statement,

@@ -118,8 +118,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=8,
+        default=64,
         help="Parallel extraction workers (online mode only; forced to 1 for offline)",
+    )
+    parser.add_argument(
+        "--extraction-passes",
+        type=int,
+        default=1,
+        help="Number of LLM extraction passes per statement (default: 1 for benchmarks)",
     )
     parser.add_argument(
         "--enable-thinking",
@@ -191,6 +197,7 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     lora_name = getattr(args, "lora_name", None)
     enable_thinking = getattr(args, "enable_thinking", False)
     thinking_budget = getattr(args, "thinking_budget", None)
+    extraction_passes = getattr(args, "extraction_passes", 1)
 
     lora_path_val = f'"{lora_path}"' if lora_path else "null"
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
@@ -234,6 +241,7 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"  enable_thinking: {enable_thinking_val}\n"
         f"  thinking_budget: {thinking_budget_val}\n"
         f"  presence_penalty: {presence_penalty}\n"
+        f"  extraction_passes: {extraction_passes}\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)

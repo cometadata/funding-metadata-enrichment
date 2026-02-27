@@ -31,6 +31,7 @@ class VLLMSamplingConfig:
     enable_thinking: bool = False
     thinking_budget: Optional[int] = None
     presence_penalty: float = 0.0
+    extraction_passes: int = 3
 
 
 @dataclass

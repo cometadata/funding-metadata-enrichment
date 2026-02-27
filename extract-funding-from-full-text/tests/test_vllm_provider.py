@@ -285,6 +285,56 @@ class TestVLLMProvider:
             assert provider.provider == ModelProvider.VLLM
 
 
+    def test_build_extract_params_reads_extraction_passes_offline(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "sampling": {"extraction_passes": 1},
+                }),
+                encoding="utf-8",
+            )
+
+            provider = VLLMProvider(vllm_config_path=str(config_path))
+            params = provider.build_extract_params(
+                "Funded by NSF.", "Extract funders.", []
+            )
+
+            assert params["extraction_passes"] == 1
+            assert params["max_workers"] == 1
+
+    def test_build_extract_params_reads_extraction_passes_online(self, tmp_path):
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"extraction_passes": 2},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                params = provider.build_extract_params(
+                    "Funded by NSF.", "Extract funders.", []
+                )
+
+                assert params["extraction_passes"] == 2
+                assert params["max_workers"] == 2
+
+
 class TestProviderFactory:
     def test_factory_creates_vllm_provider(self, tmp_path):
         mocks = _make_mock_vllm()
