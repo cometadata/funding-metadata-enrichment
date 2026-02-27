@@ -322,7 +322,7 @@ class TestLlamaConfigs:
         assert config.lora.path is None
         assert config.sampling.temperature == 0.1
         assert config.sampling.top_p == 0.9
-        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.presence_penalty == 0.5
         assert config.sampling.enable_thinking is False
         assert config.sampling.extraction_passes == 1
         assert config.engine.max_model_len == 4096
@@ -340,7 +340,7 @@ class TestLlamaConfigs:
         assert config.lora.max_rank == 64
         assert config.sampling.temperature == 0.1
         assert config.sampling.top_p == 0.9
-        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.presence_penalty == 0.5
         assert config.sampling.enable_thinking is False
         assert config.sampling.extraction_passes == 1
         assert config.engine.max_model_len == 4096
