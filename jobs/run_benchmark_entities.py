@@ -18,10 +18,10 @@ Usage (HF job):
       --flavor a100-large \\
       --secrets HF_TOKEN \\
       --timeout 2h \\
-      run_benchmark_entities.py --model-id Qwen/Qwen3-8B
+      run_benchmark_entities.py --vllm-config qwen3-8b.yaml
 
 Usage (local):
-  python run_benchmark_entities.py --max-samples 5
+  python run_benchmark_entities.py --vllm-config llama-3.1-8b.yaml --max-samples 5
 """
 
 import argparse
@@ -34,7 +34,10 @@ import tempfile
 import time
 import urllib.request
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Optional
+
+import yaml
 
 import torch
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_dataset
@@ -57,9 +60,9 @@ def parse_args() -> argparse.Namespace:
         description="Run vLLM entity extraction on benchmark funding statements"
     )
     parser.add_argument(
-        "--model-id",
-        default="Qwen/Qwen3-8B",
-        help="vLLM model HuggingFace ID",
+        "--vllm-config",
+        default="llama-3.1-8b.yaml",
+        help="vLLM config file name or path (default: llama-3.1-8b.yaml)",
     )
     parser.add_argument(
         "--source-dataset",
@@ -80,34 +83,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=32768,
-        help="vLLM max model context length",
+        default=None,
+        help="Override config max model context length",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=16384,
-        help="Max generation tokens (thinking + response combined)",
+        default=None,
+        help="Override config max generation tokens",
     )
     parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
-        default=0.95,
-        help="vLLM GPU memory utilization fraction",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["offline", "online"],
-        default="online",
-        help="vLLM inference mode: offline (in-process) or online (HTTP server)",
-    )
-    parser.add_argument(
-        "--lora-path",
-        help="Path to LoRA adapter",
-    )
-    parser.add_argument(
-        "--lora-name",
-        help="LoRA adapter name (for online mode server)",
+        default=None,
+        help="Override config GPU memory utilization fraction",
     )
     parser.add_argument(
         "--server-port",
@@ -118,31 +107,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=64,
-        help="Parallel extraction workers (online mode only; forced to 1 for offline)",
+        default=None,
+        help="Override config parallel extraction workers",
     )
     parser.add_argument(
         "--extraction-passes",
         type=int,
-        default=1,
-        help="Number of LLM extraction passes per statement (default: 1 for benchmarks)",
-    )
-    parser.add_argument(
-        "--enable-thinking",
-        action="store_true",
-        default=False,
-        help="Enable Qwen3 thinking mode (adds reasoning parser for online, strips tags for offline)",
+        default=None,
+        help="Override config extraction passes per statement",
     )
     parser.add_argument(
         "--thinking-budget",
         type=int,
         default=None,
-        help="Cap thinking tokens (online mode only); must be less than --max-tokens",
+        help="Override config thinking token budget",
     )
     parser.add_argument(
         "--config-name",
-        default="entities",
-        help="HuggingFace dataset config name for push_to_hub (default: entities)",
+        default=None,
+        help="Override config HuggingFace dataset config name for push_to_hub",
     )
     return parser.parse_args()
 
@@ -189,81 +172,115 @@ def load_gold_statements(
     return results_by_split
 
 
-def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
-    """Write a temporary vLLM config YAML and return the path."""
-    mode = getattr(args, "mode", "offline")
-    port = getattr(args, "server_port", 8000)
-    lora_path = getattr(args, "lora_path", None)
-    lora_name = getattr(args, "lora_name", None)
-    enable_thinking = getattr(args, "enable_thinking", False)
-    thinking_budget = getattr(args, "thinking_budget", None)
-    extraction_passes = getattr(args, "extraction_passes", 1)
+def _resolve_config_path(config_arg: str) -> str:
+    """Resolve a vLLM config path.
 
-    lora_path_val = f'"{lora_path}"' if lora_path else "null"
-    lora_name_val = f'"{lora_name}"' if lora_name else "null"
-    enable_thinking_val = "true" if enable_thinking else "false"
-    thinking_budget_val = str(thinking_budget) if thinking_budget is not None else "null"
-    extraction_timeout = 600 if enable_thinking else 120
+    If config_arg is an absolute path or relative path that exists, use it directly.
+    Otherwise, look it up in the bundled configs/vllm/ directory.
+    """
+    if os.path.isfile(config_arg):
+        return config_arg
 
-    if enable_thinking:
-        temperature = 0.6
-        top_p = 0.95
-        presence_penalty = 1.5
-    else:
-        temperature = 0.7
-        top_p = 0.8
-        presence_penalty = 0.0
-
-    config_content = (
-        f'model: "{model_id}"\n'
-        f'mode: "{mode}"\n'
-        f"\n"
-        f"lora:\n"
-        f"  path: {lora_path_val}\n"
-        f"  name: {lora_name_val}\n"
-        f"\n"
-        f"engine:\n"
-        f"  tensor_parallel_size: 1\n"
-        f"  max_model_len: {args.max_model_len}\n"
-        f"  gpu_memory_utilization: {args.gpu_memory_utilization}\n"
-        f'  dtype: "auto"\n'
-        f"  enable_prefix_caching: true\n"
-        f"\n"
-        f"server:\n"
-        f'  url: "http://localhost:{port}/v1"\n'
-        f"  timeout: {extraction_timeout}\n"
-        f"\n"
-        f"sampling:\n"
-        f"  temperature: {temperature}\n"
-        f"  top_p: {top_p}\n"
-        f"  top_k: 20\n"
-        f"  max_tokens: {args.max_tokens}\n"
-        f"  enable_thinking: {enable_thinking_val}\n"
-        f"  thinking_budget: {thinking_budget_val}\n"
-        f"  presence_penalty: {presence_penalty}\n"
-        f"  extraction_passes: {extraction_passes}\n"
+    # Look in bundled configs directory relative to repo root
+    bundled = (
+        Path(__file__).resolve().parent.parent
+        / "extract-funding-from-full-text"
+        / "funding_extractor"
+        / "configs"
+        / "vllm"
+        / config_arg
     )
+    if bundled.is_file():
+        return str(bundled)
+
+    # Also try relative to the installed package
+    try:
+        import funding_extractor
+        pkg_dir = Path(funding_extractor.__file__).resolve().parent
+        pkg_config = pkg_dir / "configs" / "vllm" / config_arg
+        if pkg_config.is_file():
+            return str(pkg_config)
+    except (ImportError, AttributeError):
+        pass
+
+    raise FileNotFoundError(
+        f"vLLM config not found: {config_arg}. "
+        f"Pass an absolute path or a filename from configs/vllm/."
+    )
+
+
+def load_and_patch_config(args: argparse.Namespace) -> tuple[str, str, dict]:
+    """Load a named vLLM config, apply CLI overrides, write to temp file.
+
+    Returns (temp_config_path, model_id, original_config_data).
+    """
+    config_path = _resolve_config_path(args.vllm_config)
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    # Keep a copy of original data for server startup and defaults
+    original_data = yaml.safe_load(yaml.dump(data))
+
+    model_id = data.get("model")
+    if not model_id:
+        raise ValueError(
+            f"Config {config_path} has no 'model' set. "
+            f"Use a model-specific config or add 'model:' to the YAML."
+        )
+
+    # Apply CLI overrides to relevant sections (only when explicitly provided)
+    if args.max_model_len is not None:
+        data.setdefault("engine", {})["max_model_len"] = args.max_model_len
+    if args.gpu_memory_utilization is not None:
+        data.setdefault("engine", {})["gpu_memory_utilization"] = args.gpu_memory_utilization
+    if args.max_tokens is not None:
+        data.setdefault("sampling", {})["max_tokens"] = args.max_tokens
+    if args.thinking_budget is not None:
+        data.setdefault("sampling", {})["thinking_budget"] = args.thinking_budget
+    if args.extraction_passes is not None:
+        data.setdefault("sampling", {})["extraction_passes"] = args.extraction_passes
+
+    # Server URL: always inject for online mode so provider validation passes
+    mode = data.get("mode", "offline")
+    if mode == "online":
+        port = getattr(args, "server_port", 8000)
+        data.setdefault("server", {})["url"] = f"http://localhost:{port}/v1"
+
+    # Write patched config to temp file
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    tmp.write(config_content)
+    yaml.dump(data, tmp, default_flow_style=False)
     tmp.flush()
     tmp.close()
-    return tmp.name
+
+    return tmp.name, model_id, original_data
 
 
-def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Popen:
+def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace) -> subprocess.Popen:
     """Start vLLM server as a background process and wait for readiness."""
     port = getattr(args, "server_port", 8000)
-    lora_path = getattr(args, "lora_path", None)
-    lora_name = getattr(args, "lora_name", None)
-    enable_thinking = getattr(args, "enable_thinking", False)
+    lora_config = config_data.get("lora", {})
+    lora_path = lora_config.get("path")
+    lora_name = lora_config.get("name")
+    sampling = config_data.get("sampling", {})
+    enable_thinking = sampling.get("enable_thinking", False)
+    engine = config_data.get("engine", {})
+
+    # Apply CLI overrides for engine params (same as load_and_patch_config)
+    max_model_len = engine.get("max_model_len", 16384)
+    if args.max_model_len is not None:
+        max_model_len = args.max_model_len
+    gpu_mem = engine.get("gpu_memory_utilization", 0.9)
+    if args.gpu_memory_utilization is not None:
+        gpu_mem = args.gpu_memory_utilization
 
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_id,
         "--port", str(port),
-        "--max-model-len", str(args.max_model_len),
-        "--gpu-memory-utilization", str(args.gpu_memory_utilization),
-        "--dtype", "auto",
+        "--max-model-len", str(max_model_len),
+        "--gpu-memory-utilization", str(gpu_mem),
+        "--dtype", engine.get("dtype", "auto"),
         "--disable-log-requests",
     ]
     if enable_thinking:
@@ -511,18 +528,28 @@ def main() -> None:
         max_samples=args.max_samples,
     )
 
-    mode = args.mode
-    logger.info("=== Stage 2: vLLM Entity Extraction (mode=%s) ===", mode)
-    vllm_config_path = write_vllm_config(args.model_id, args)
+    # Load and patch config
+    vllm_config_path, model_id, config_data = load_and_patch_config(args)
+
+    mode = config_data.get("mode", "offline")
+    benchmark = config_data.get("benchmark", {})
+    workers = args.workers if args.workers is not None else benchmark.get("workers", 64)
+    config_name = args.config_name if args.config_name is not None else benchmark.get("config_name")
+
+    if not config_name:
+        logger.error("No config_name: set benchmark.config_name in YAML or pass --config-name")
+        sys.exit(1)
+
+    logger.info("=== Stage 2: vLLM Entity Extraction (mode=%s, model=%s) ===", mode, model_id)
     server_proc = None
     try:
         if mode == "online":
-            server_proc = start_vllm_server(args.model_id, args)
+            server_proc = start_vllm_server(model_id, config_data, args)
         results = run_stage2(
             statements_by_split=statements,
-            model_id=args.model_id,
+            model_id=model_id,
             vllm_config_path=vllm_config_path,
-            workers=args.workers,
+            workers=workers,
             mode=mode,
         )
     finally:
@@ -540,7 +567,7 @@ def main() -> None:
         )
 
     logger.info("=== Pushing to HuggingFace Hub ===")
-    push_entities(results, args.output_dataset, config_name=args.config_name)
+    push_entities(results, args.output_dataset, config_name=config_name)
 
     elapsed = time.time() - t0
     logger.info("Done in %.1f minutes", elapsed / 60)
