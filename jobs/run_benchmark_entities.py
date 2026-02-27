@@ -195,8 +195,19 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     lora_path_val = f'"{lora_path}"' if lora_path else "null"
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
     enable_thinking_val = "true" if enable_thinking else "false"
+    if enable_thinking and thinking_budget is None:
+        thinking_budget = args.max_tokens // 2
     thinking_budget_val = str(thinking_budget) if thinking_budget is not None else "null"
-    extraction_timeout = 300 if enable_thinking else 120
+    extraction_timeout = 600 if enable_thinking else 120
+
+    if enable_thinking:
+        temperature = 0.6
+        top_p = 0.95
+        presence_penalty = 1.5
+    else:
+        temperature = 0.7
+        top_p = 0.8
+        presence_penalty = 0.0
 
     config_content = (
         f'model: "{model_id}"\n'
@@ -218,12 +229,13 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
         f"  timeout: {extraction_timeout}\n"
         f"\n"
         f"sampling:\n"
-        f"  temperature: 0.7\n"
-        f"  top_p: 0.8\n"
+        f"  temperature: {temperature}\n"
+        f"  top_p: {top_p}\n"
         f"  top_k: 20\n"
         f"  max_tokens: {args.max_tokens}\n"
         f"  enable_thinking: {enable_thinking_val}\n"
         f"  thinking_budget: {thinking_budget_val}\n"
+        f"  presence_penalty: {presence_penalty}\n"
     )
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     tmp.write(config_content)
@@ -249,7 +261,7 @@ def start_vllm_server(model_id: str, args: argparse.Namespace) -> subprocess.Pop
         "--disable-log-requests",
     ]
     if enable_thinking:
-        cmd.extend(["--reasoning-parser", "qwen3"])
+        cmd.extend(["--reasoning-parser", "deepseek_r1"])
     if lora_path:
         adapter_name = lora_name or "default"
         cmd.extend([

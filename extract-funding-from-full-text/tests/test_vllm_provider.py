@@ -122,7 +122,8 @@ class TestVLLMLanguageModelInfer:
             list(model.infer(["prompt"]))
 
             mocks["vllm"].SamplingParams.assert_called_once_with(
-                temperature=0.5, top_p=0.9, top_k=50, max_tokens=1024
+                temperature=0.5, top_p=0.9, top_k=50, max_tokens=1024,
+                presence_penalty=0.0,
             )
 
     def test_infer_with_lora_request(self):
@@ -341,6 +342,7 @@ class TestVLLMProviderOnline:
                 assert call_kwargs["top_p"] == 0.8
                 assert call_kwargs["top_k"] == 20
                 assert call_kwargs["max_output_tokens"] == 4096
+                assert call_kwargs["presence_penalty"] == 0.0
 
     def test_online_mode_with_lora_uses_lora_name(self, tmp_path):
         """When LoRA is configured in online mode, lora.name becomes the model_id."""
@@ -794,3 +796,106 @@ class TestDrainReasoning:
                 api_key="key",
             )
             assert provider.drain_reasoning() == []
+
+
+class TestPresencePenalty:
+    def test_presence_penalty_passed_to_sampling_params(self):
+        """Offline mode should pass presence_penalty to SamplingParams."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMLanguageModel
+
+            mock_engine = MagicMock()
+            mock_engine.generate.return_value = [_make_request_output("{}")]
+            mocks["vllm"].LLM.return_value = mock_engine
+
+            config = VLLMConfig(
+                model="test-model",
+                sampling=VLLMSamplingConfig(presence_penalty=1.5),
+            )
+            model = VLLMLanguageModel(config)
+            list(model.infer(["prompt"]))
+
+            mocks["vllm"].SamplingParams.assert_called_once()
+            call_kwargs = mocks["vllm"].SamplingParams.call_args[1]
+            assert call_kwargs["presence_penalty"] == 1.5
+
+    def test_online_presence_penalty_passed_to_openai_model(self, tmp_path):
+        """Online mode should pass presence_penalty to OpenAILanguageModel."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"presence_penalty": 1.5},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                call_kwargs = mock_openai_lm.call_args[1]
+                assert call_kwargs["presence_penalty"] == 1.5
+
+
+class TestThinkingMaxWorkers:
+    def test_thinking_mode_reduces_max_workers(self, tmp_path):
+        """Online mode with thinking should use max_workers=1."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"enable_thinking": True},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                params = provider.build_extract_params(
+                    "Funded by NSF.", "Extract funders.", []
+                )
+                assert params["extraction_passes"] == 3
+                assert params["max_workers"] == 1
+
+    def test_non_thinking_online_keeps_parallel_workers(self, tmp_path):
+        """Online mode without thinking should use max_workers=extraction_passes."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMProvider
+
+            config_path = tmp_path / "config.yaml"
+            config_path.write_text(
+                yaml.dump({
+                    "model": "test-model",
+                    "mode": "online",
+                    "server": {"url": "http://localhost:8000/v1"},
+                    "sampling": {"enable_thinking": False},
+                }),
+                encoding="utf-8",
+            )
+            with patch(
+                "langextract.providers.openai.OpenAILanguageModel"
+            ) as mock_openai_lm:
+                mock_openai_lm.return_value = MagicMock()
+                provider = VLLMProvider(vllm_config_path=str(config_path))
+                params = provider.build_extract_params(
+                    "Funded by NSF.", "Extract funders.", []
+                )
+                assert params["extraction_passes"] == 3
+                assert params["max_workers"] == 3

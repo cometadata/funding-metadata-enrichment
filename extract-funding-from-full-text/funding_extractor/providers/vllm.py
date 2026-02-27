@@ -30,6 +30,7 @@ class VLLMLanguageModel(BaseLanguageModel):
         self._top_k = config.sampling.top_k
         self._max_tokens = config.sampling.max_tokens
         self._enable_thinking = config.sampling.enable_thinking
+        self._presence_penalty = config.sampling.presence_penalty
         self._lora_request = self._build_lora_request(config)
         self._reasoning_traces: list[str] = []
         self._reasoning_lock = threading.Lock()
@@ -113,6 +114,7 @@ class VLLMLanguageModel(BaseLanguageModel):
             top_p=merged.get("top_p", self._top_p),
             top_k=merged.get("top_k", self._top_k),
             max_tokens=merged.get("max_output_tokens", self._max_tokens),
+            presence_penalty=merged.get("presence_penalty", self._presence_penalty),
         )
 
         engine = self._get_or_create_engine(self._config)
@@ -216,6 +218,7 @@ class VLLMProvider(BaseProvider):
             top_p=self._vllm_config.sampling.top_p,
             top_k=self._vllm_config.sampling.top_k,
             max_output_tokens=self._vllm_config.sampling.max_tokens,
+            presence_penalty=self._vllm_config.sampling.presence_penalty,
             max_workers=1,
         )
 
@@ -237,14 +240,16 @@ class VLLMProvider(BaseProvider):
 
     def build_extract_params(self, statement: str, prompt: str, examples: List[Any]) -> Dict[str, Any]:
         is_online = self._vllm_config.mode == "online"
+        is_thinking = self._vllm_config.sampling.enable_thinking
         extraction_passes = 3
+        max_workers = 1 if (not is_online or is_thinking) else extraction_passes
         return {
             "text_or_documents": statement,
             "prompt_description": prompt,
             "examples": examples,
             "temperature": self._vllm_config.sampling.temperature,
             "extraction_passes": extraction_passes,
-            "max_workers": extraction_passes if is_online else 1,
+            "max_workers": max_workers,
             "debug": self.debug,
             "fence_output": True,
             "use_schema_constraints": False,

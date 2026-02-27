@@ -30,6 +30,7 @@ class VLLMSamplingConfig:
     max_tokens: int = 4096
     enable_thinking: bool = False
     thinking_budget: Optional[int] = None
+    presence_penalty: float = 0.0
 
 
 @dataclass
