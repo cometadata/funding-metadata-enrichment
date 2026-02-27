@@ -1,6 +1,4 @@
-# Generic vLLM config — no model specified.
-# Use a named config (qwen3-8b.yaml, llama-3.1-8b.yaml, etc.)
-# or pass --model to override.
+model: "meta-llama/Llama-3.1-8B-Instruct"
 mode: "offline"
 
 lora:
@@ -11,7 +9,7 @@ lora:
 
 engine:
   tensor_parallel_size: 1
-  max_model_len: 16384
+  max_model_len: 4096
   gpu_memory_utilization: 0.9
   dtype: "auto"
   quantization: null
@@ -23,16 +21,16 @@ server:
   timeout: 120
 
 sampling:
-  temperature: 0.7
+  temperature: 0.1
   top_p: 0.9
   top_k: 20
-  max_tokens: 4096
+  max_tokens: 16384
   enable_thinking: false
   thinking_budget: null
   presence_penalty: 0.0
-  extraction_passes: 3
+  extraction_passes: 1
   batch_length: 64
 
 benchmark:
-  config_name: null
+  config_name: "llama-3.1-8b-entities"
   workers: 64

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -10,6 +12,8 @@ from funding_extractor.providers.vllm_config import (
     VLLMServerConfig,
     load_vllm_config,
 )
+
+CONFIGS_DIR = Path(__file__).resolve().parent.parent / "funding_extractor" / "configs" / "vllm"
 
 
 def _write_config(tmp_path, data):
@@ -234,3 +238,126 @@ def test_load_config_benchmark_partial(tmp_path):
     config = load_vllm_config(_write_config(tmp_path, data))
     assert config.benchmark.config_name == "test"
     assert config.benchmark.workers == 64
+
+
+class TestQwenConfigParity:
+    """Verify Qwen configs reproduce exact write_vllm_config() output."""
+
+    def test_qwen3_8b_config_matches_current_nonthinking(self):
+        """Field-by-field parity with write_vllm_config(enable_thinking=False)."""
+        config = load_vllm_config(str(CONFIGS_DIR / "qwen3-8b.yaml"))
+        # Model & mode
+        assert config.model == "Qwen/Qwen3-8B"
+        assert config.mode == "online"
+        # LoRA (not set in current setup)
+        assert config.lora.path is None
+        assert config.lora.name is None
+        assert config.lora.max_rank == 64  # dataclass default
+        assert config.lora.max_loras == 1  # dataclass default
+        # Engine
+        assert config.engine.tensor_parallel_size == 1
+        assert config.engine.max_model_len == 32768
+        assert config.engine.gpu_memory_utilization == 0.95
+        assert config.engine.dtype == "auto"
+        assert config.engine.quantization is None  # dataclass default
+        assert config.engine.enable_prefix_caching is True
+        # Server
+        assert config.server.url == "http://localhost:8000/v1"
+        assert config.server.api_key is None  # dataclass default
+        assert config.server.timeout == 120
+        # Sampling — MUST match non-thinking branch of write_vllm_config()
+        assert config.sampling.temperature == 0.7
+        assert config.sampling.top_p == 0.8
+        assert config.sampling.top_k == 20
+        assert config.sampling.max_tokens == 16384
+        assert config.sampling.enable_thinking is False
+        assert config.sampling.thinking_budget is None
+        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.extraction_passes == 1  # benchmark default
+        assert config.sampling.batch_length == 64  # dataclass default
+        # Benchmark
+        assert config.benchmark.config_name == "qwen3-8b-entities"
+        assert config.benchmark.workers == 64
+
+    def test_qwen3_8b_thinking_config_matches_current_thinking(self):
+        """Field-by-field parity with write_vllm_config(enable_thinking=True)."""
+        config = load_vllm_config(str(CONFIGS_DIR / "qwen3-8b-thinking.yaml"))
+        # Model & mode
+        assert config.model == "Qwen/Qwen3-8B"
+        assert config.mode == "online"
+        # LoRA
+        assert config.lora.path is None
+        assert config.lora.name is None
+        # Engine (same as non-thinking)
+        assert config.engine.tensor_parallel_size == 1
+        assert config.engine.max_model_len == 32768
+        assert config.engine.gpu_memory_utilization == 0.95
+        assert config.engine.dtype == "auto"
+        assert config.engine.enable_prefix_caching is True
+        # Server
+        assert config.server.url == "http://localhost:8000/v1"
+        assert config.server.timeout == 600  # thinking timeout
+        # Sampling — MUST match thinking branch of write_vllm_config()
+        assert config.sampling.temperature == 0.6
+        assert config.sampling.top_p == 0.95
+        assert config.sampling.top_k == 20
+        assert config.sampling.max_tokens == 16384
+        assert config.sampling.enable_thinking is True
+        assert config.sampling.thinking_budget is None  # set via CLI override
+        assert config.sampling.presence_penalty == 1.5
+        assert config.sampling.extraction_passes == 1
+        assert config.sampling.batch_length == 64
+        # Benchmark
+        assert config.benchmark.config_name == "qwen3-8b-entities-thinking"
+        assert config.benchmark.workers == 64
+
+
+class TestLlamaConfigs:
+    """Verify Llama configs have correct model-specific parameters."""
+
+    def test_llama_3_1_8b_config_loads(self):
+        config = load_vllm_config(str(CONFIGS_DIR / "llama-3.1-8b.yaml"))
+        assert config.model == "meta-llama/Llama-3.1-8B-Instruct"
+        assert config.mode == "offline"
+        assert config.lora.path is None
+        assert config.sampling.temperature == 0.1
+        assert config.sampling.top_p == 0.9
+        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.enable_thinking is False
+        assert config.sampling.extraction_passes == 1
+        assert config.engine.max_model_len == 4096
+        assert config.engine.gpu_memory_utilization == 0.9
+        assert config.server.timeout == 120
+        assert config.benchmark.config_name == "llama-3.1-8b-entities"
+        assert config.benchmark.workers == 64
+
+    def test_llama_3_1_8b_lora_config_loads(self):
+        config = load_vllm_config(str(CONFIGS_DIR / "llama-3.1-8b-lora.yaml"))
+        assert config.model == "meta-llama/Llama-3.1-8B-Instruct"
+        assert config.mode == "offline"
+        assert config.lora.path == "cometadata/funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft"
+        assert config.lora.name == "funding-parsing-lora"
+        assert config.lora.max_rank == 64
+        assert config.sampling.temperature == 0.1
+        assert config.sampling.top_p == 0.9
+        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.enable_thinking is False
+        assert config.sampling.extraction_passes == 1
+        assert config.engine.max_model_len == 4096
+        assert config.engine.gpu_memory_utilization == 0.9
+        assert config.benchmark.config_name == "llama-3.1-8b-lora-entities"
+
+
+class TestDefaultConfig:
+    def test_default_config_has_no_model(self):
+        with pytest.raises(ValueError, match="model"):
+            load_vllm_config(str(CONFIGS_DIR / "default.yaml"))
+
+    def test_default_config_with_model_override(self):
+        config = load_vllm_config(
+            str(CONFIGS_DIR / "default.yaml"),
+            model_override="any-model",
+        )
+        assert config.model == "any-model"
+        assert config.mode == "offline"
+        assert config.benchmark.config_name is None
