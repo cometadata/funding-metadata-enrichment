@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
-        default=0.85,
+        default=0.95,
         help="vLLM GPU memory utilization fraction",
     )
     parser.add_argument(
@@ -118,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,
+        default=8,
         help="Parallel extraction workers (online mode only; forced to 1 for offline)",
     )
     parser.add_argument(
@@ -195,8 +195,6 @@ def write_vllm_config(model_id: str, args: argparse.Namespace) -> str:
     lora_path_val = f'"{lora_path}"' if lora_path else "null"
     lora_name_val = f'"{lora_name}"' if lora_name else "null"
     enable_thinking_val = "true" if enable_thinking else "false"
-    if enable_thinking and thinking_budget is None:
-        thinking_budget = args.max_tokens // 2
     thinking_budget_val = str(thinking_budget) if thinking_budget is not None else "null"
     extraction_timeout = 600 if enable_thinking else 120
 

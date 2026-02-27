@@ -611,8 +611,8 @@ class TestVLLMThinkingOnline:
 
                 assert lm._reasoning_traces == ["I need to extract funders"]
 
-    def test_online_injects_thinking_budget(self, tmp_path):
-        """Patched client should inject thinking_token_budget in extra_body."""
+    def test_online_does_not_inject_thinking_budget(self, tmp_path):
+        """Patched client should NOT inject thinking_token_budget (unsupported by vLLM)."""
         mocks = _make_mock_vllm()
         with patch.dict(sys.modules, mocks):
             from funding_extractor.providers.vllm import VLLMProvider
@@ -653,7 +653,7 @@ class TestVLLMThinkingOnline:
                 )
 
                 call_kwargs = original_create.call_args[1]
-                assert call_kwargs["extra_body"]["thinking_token_budget"] == 4096
+                assert "thinking_token_budget" not in call_kwargs["extra_body"]
                 assert call_kwargs["extra_body"]["chat_template_kwargs"] == {
                     "enable_thinking": True
                 }
@@ -846,8 +846,8 @@ class TestPresencePenalty:
 
 
 class TestThinkingMaxWorkers:
-    def test_thinking_mode_reduces_max_workers(self, tmp_path):
-        """Online mode with thinking should use max_workers=1."""
+    def test_thinking_online_keeps_parallel_workers(self, tmp_path):
+        """Online mode with thinking should still use max_workers=extraction_passes."""
         mocks = _make_mock_vllm()
         with patch.dict(sys.modules, mocks):
             from funding_extractor.providers.vllm import VLLMProvider
@@ -871,7 +871,7 @@ class TestThinkingMaxWorkers:
                     "Funded by NSF.", "Extract funders.", []
                 )
                 assert params["extraction_passes"] == 3
-                assert params["max_workers"] == 1
+                assert params["max_workers"] == 3
 
     def test_non_thinking_online_keeps_parallel_workers(self, tmp_path):
         """Online mode without thinking should use max_workers=extraction_passes."""

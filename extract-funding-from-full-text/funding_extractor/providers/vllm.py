@@ -144,8 +144,6 @@ def _patch_client_for_thinking(
     def patched_create(**kwargs):
         extra_body = kwargs.pop("extra_body", {}) or {}
         extra_body["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
-        if enable_thinking and thinking_budget is not None:
-            extra_body["thinking_token_budget"] = thinking_budget
         kwargs["extra_body"] = extra_body
         response = original_create(**kwargs)
         if enable_thinking and response.choices:
@@ -242,7 +240,7 @@ class VLLMProvider(BaseProvider):
         is_online = self._vllm_config.mode == "online"
         is_thinking = self._vllm_config.sampling.enable_thinking
         extraction_passes = 3
-        max_workers = 1 if (not is_online or is_thinking) else extraction_passes
+        max_workers = extraction_passes if is_online else 1
         return {
             "text_or_documents": statement,
             "prompt_description": prompt,
