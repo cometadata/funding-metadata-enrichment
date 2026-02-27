@@ -2,6 +2,7 @@ import pytest
 import yaml
 
 from funding_extractor.providers.vllm_config import (
+    VLLMBenchmarkConfig,
     VLLMConfig,
     VLLMEngineConfig,
     VLLMLoRAConfig,
@@ -200,3 +201,36 @@ def test_server_config_defaults():
     assert sc.url is None
     assert sc.api_key is None
     assert sc.timeout == 120
+
+
+def test_benchmark_config_defaults():
+    bc = VLLMBenchmarkConfig()
+    assert bc.config_name is None
+    assert bc.workers == 64
+
+
+def test_load_config_benchmark_section(tmp_path):
+    data = {
+        "model": "some-model",
+        "benchmark": {"config_name": "my-entities", "workers": 32},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.benchmark.config_name == "my-entities"
+    assert config.benchmark.workers == 32
+
+
+def test_load_config_benchmark_defaults(tmp_path):
+    data = {"model": "some-model"}
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.benchmark.config_name is None
+    assert config.benchmark.workers == 64
+
+
+def test_load_config_benchmark_partial(tmp_path):
+    data = {
+        "model": "some-model",
+        "benchmark": {"config_name": "test"},
+    }
+    config = load_vllm_config(_write_config(tmp_path, data))
+    assert config.benchmark.config_name == "test"
+    assert config.benchmark.workers == 64

@@ -43,6 +43,12 @@ class VLLMServerConfig:
 
 
 @dataclass
+class VLLMBenchmarkConfig:
+    config_name: Optional[str] = None
+    workers: int = 64
+
+
+@dataclass
 class VLLMConfig:
     model: str
     mode: str = "offline"
@@ -50,6 +56,7 @@ class VLLMConfig:
     engine: VLLMEngineConfig = field(default_factory=VLLMEngineConfig)
     sampling: VLLMSamplingConfig = field(default_factory=VLLMSamplingConfig)
     server: VLLMServerConfig = field(default_factory=VLLMServerConfig)
+    benchmark: VLLMBenchmarkConfig = field(default_factory=VLLMBenchmarkConfig)
 
 
 def _filter_known_fields(cls, data: dict) -> dict:
@@ -76,6 +83,7 @@ def load_vllm_config(
     engine_data = _filter_known_fields(VLLMEngineConfig, data.get("engine", {}))
     sampling_data = _filter_known_fields(VLLMSamplingConfig, data.get("sampling", {}))
     server_data = _filter_known_fields(VLLMServerConfig, data.get("server", {}))
+    benchmark_data = _filter_known_fields(VLLMBenchmarkConfig, data.get("benchmark", {}))
 
     config = VLLMConfig(
         model=model or "",
@@ -84,6 +92,7 @@ def load_vllm_config(
         engine=VLLMEngineConfig(**engine_data),
         sampling=VLLMSamplingConfig(**sampling_data),
         server=VLLMServerConfig(**server_data),
+        benchmark=VLLMBenchmarkConfig(**benchmark_data),
     )
 
     if model_override:
