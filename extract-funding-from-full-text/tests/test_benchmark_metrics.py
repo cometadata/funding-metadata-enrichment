@@ -435,7 +435,11 @@ def test_named_and_unnamed_funders_mixed():
 
 
 def test_unnamed_funders_matching_scheme_and_title():
-    """Unnamed funders with matching funding_scheme and award_title should get credit."""
+    """Unnamed funders with matching funding_scheme and award_title should get credit.
+
+    When both gold and pred lack funder_name, the effective name falls back to
+    the first scheme, so they match as funders via scheme-as-funder equivalence.
+    """
     gold = GoldDocument(
         doi="10.1234/scheme-title",
         funding_statement="Funded by a fellowship.",
@@ -469,8 +473,11 @@ def test_unnamed_funders_matching_scheme_and_title():
         funder_threshold=0.8,
         id_match_mode="normalized",
     )
-    assert dm.funder.gold_count == 0
-    assert dm.funder.pred_count == 0
+    # Effective name = "Presidential Fellowship" (from scheme), so funders match
+    assert dm.funder.gold_count == 1
+    assert dm.funder.pred_count == 1
+    assert dm.funder.gold_matched == 1
+    assert dm.funder.f1 == 1.0
     assert dm.award_id.gold_count == 0
     assert dm.award_id.pred_count == 0
     assert dm.funding_scheme.gold_count == 1
@@ -481,6 +488,53 @@ def test_unnamed_funders_matching_scheme_and_title():
     assert dm.award_title.pred_count == 1
     assert dm.award_title.gold_matched == 1
     assert dm.award_title.f1 == 1.0
+
+
+def test_scheme_as_funder_equivalence():
+    """When gold has scheme+award_id and pred uses scheme as funder_name, award IDs should match."""
+    gold = GoldDocument(
+        doi="10.1234/scheme-funder",
+        funding_statement="Funded by Horizon 2020 grant 101053661.",
+        funders=[
+            GoldFunder(
+                funder_name=None,
+                awards=[GoldAward(
+                    funding_schemes=["Horizon 2020"],
+                    award_ids=["101053661"],
+                    award_titles=[],
+                )],
+            )
+        ],
+        markdown="",
+    )
+    pred_funders = [
+        FunderEntity(
+            funder_name="Horizon 2020",
+            awards=[Award(
+                funding_scheme=[],
+                award_ids=["101053661"],
+                award_title=[],
+            )],
+        )
+    ]
+    dm = evaluate_document(
+        gold=gold,
+        pred_statements=["Funded by Horizon 2020 grant 101053661."],
+        pred_funders=pred_funders,
+        threshold=0.8,
+        funder_threshold=0.8,
+        id_match_mode="normalized",
+    )
+    # Gold effective name = "Horizon 2020" (from scheme), pred funder_name = "Horizon 2020"
+    assert dm.funder.gold_count == 1
+    assert dm.funder.pred_count == 1
+    assert dm.funder.gold_matched == 1
+    assert dm.funder.f1 == 1.0
+    # Award ID should match because funders are now paired
+    assert dm.award_id.gold_count == 1
+    assert dm.award_id.pred_count == 1
+    assert dm.award_id.gold_matched == 1
+    assert dm.award_id.f1 == 1.0
 
 
 def test_aggregate_metrics_micro_average():

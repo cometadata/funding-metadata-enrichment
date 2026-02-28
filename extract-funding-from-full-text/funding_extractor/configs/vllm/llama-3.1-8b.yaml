@@ -34,3 +34,9 @@ sampling:
 benchmark:
   config_name: "llama-3.1-8b-entities"
   workers: 64
+
+extraction:
+  prompt_template: "extraction_prompt.txt"
+  output_format: "direct"
+  stop_sequences:
+    - "\nQ:"

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from funding_extractor.benchmark.dataset import GoldDocument, GoldFunder
 from funding_extractor.benchmark.matching import (
@@ -111,24 +111,49 @@ def _collect_awards_from_pred(funder: FunderEntity) -> Tuple[List[str], List[str
     return ids, schemes, titles
 
 
+def _effective_gold_name(funder: GoldFunder) -> Optional[str]:
+    """Return the funder's name, falling back to first scheme if unnamed."""
+    if funder.funder_name:
+        return funder.funder_name
+    for a in funder.awards:
+        if a.funding_schemes:
+            return a.funding_schemes[0]
+    return None
+
+
+def _effective_pred_name(funder: FunderEntity) -> Optional[str]:
+    """Return the funder's name, falling back to first scheme if unnamed."""
+    if funder.funder_name:
+        return funder.funder_name
+    for a in funder.awards:
+        if a.funding_scheme:
+            return a.funding_scheme[0]
+    return None
+
+
 def _merge_gold_funders(funders: List[GoldFunder], threshold: float) -> List[GoldFunder]:
-    """Merge gold funders with similar names, combining their awards."""
+    """Merge gold funders with similar names, combining their awards.
+
+    Uses effective name (funder_name or first scheme) so that scheme-only
+    funders can match predictions that used the scheme as funder_name.
+    """
     from funding_extractor.benchmark.dataset import GoldAward
     groups: List[Tuple[str, List[GoldAward]]] = []
     unnamed_awards: List[GoldAward] = []
 
     for f in funders:
-        if not f.funder_name:
+        name = _effective_gold_name(f)
+        if not name:
             unnamed_awards.extend(f.awards)
             continue
         merged = False
-        for i, (name, awards) in enumerate(groups):
-            if similarity(f.funder_name, name) >= threshold:
+        for i, (group_name, awards) in enumerate(groups):
+            if similarity(name, group_name) >= threshold:
                 awards.extend(f.awards)
                 merged = True
                 break
         if not merged:
-            groups.append((f.funder_name, list(f.awards)))
+            groups.append((name, list(f.awards)))
 
     result = [GoldFunder(funder_name=name, awards=awards) for name, awards in groups]
     if unnamed_awards:
@@ -137,23 +162,28 @@ def _merge_gold_funders(funders: List[GoldFunder], threshold: float) -> List[Gol
 
 
 def _merge_pred_funders(funders: List[FunderEntity], threshold: float) -> List[FunderEntity]:
-    """Merge predicted funders with similar names, combining their awards."""
+    """Merge predicted funders with similar names, combining their awards.
+
+    Uses effective name (funder_name or first scheme) so that scheme-only
+    funders can match gold entries that used the scheme as funder_name.
+    """
     from funding_extractor.entities.models import Award
     groups: List[Tuple[str, List[Award]]] = []
     unnamed_awards: List[Award] = []
 
     for f in funders:
-        if not f.funder_name:
+        name = _effective_pred_name(f)
+        if not name:
             unnamed_awards.extend(f.awards)
             continue
         merged = False
-        for i, (name, awards) in enumerate(groups):
-            if similarity(f.funder_name, name) >= threshold:
+        for i, (group_name, awards) in enumerate(groups):
+            if similarity(name, group_name) >= threshold:
                 awards.extend(f.awards)
                 merged = True
                 break
         if not merged:
-            groups.append((f.funder_name, list(f.awards)))
+            groups.append((name, list(f.awards)))
 
     result = [FunderEntity(funder_name=name, awards=awards) for name, awards in groups]
     if unnamed_awards:
