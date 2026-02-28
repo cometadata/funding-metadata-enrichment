@@ -49,6 +49,13 @@ class VLLMBenchmarkConfig:
 
 
 @dataclass
+class VLLMExtractionConfig:
+    prompt_template: Optional[str] = None
+    output_format: str = "langextract"
+    stop_sequences: list[str] = field(default_factory=list)
+
+
+@dataclass
 class VLLMConfig:
     model: str
     mode: str = "offline"
@@ -57,6 +64,7 @@ class VLLMConfig:
     sampling: VLLMSamplingConfig = field(default_factory=VLLMSamplingConfig)
     server: VLLMServerConfig = field(default_factory=VLLMServerConfig)
     benchmark: VLLMBenchmarkConfig = field(default_factory=VLLMBenchmarkConfig)
+    extraction: VLLMExtractionConfig = field(default_factory=VLLMExtractionConfig)
 
 
 def _filter_known_fields(cls, data: dict) -> dict:
@@ -84,6 +92,7 @@ def load_vllm_config(
     sampling_data = _filter_known_fields(VLLMSamplingConfig, data.get("sampling", {}))
     server_data = _filter_known_fields(VLLMServerConfig, data.get("server", {}))
     benchmark_data = _filter_known_fields(VLLMBenchmarkConfig, data.get("benchmark", {}))
+    extraction_data = _filter_known_fields(VLLMExtractionConfig, data.get("extraction", {}))
 
     config = VLLMConfig(
         model=model or "",
@@ -93,6 +102,7 @@ def load_vllm_config(
         sampling=VLLMSamplingConfig(**sampling_data),
         server=VLLMServerConfig(**server_data),
         benchmark=VLLMBenchmarkConfig(**benchmark_data),
+        extraction=VLLMExtractionConfig(**extraction_data),
     )
 
     if model_override:
@@ -110,5 +120,9 @@ def load_vllm_config(
         )
     if config.mode == "online" and not config.server.url:
         raise ValueError("server.url is required when mode is 'online'.")
+    if config.extraction.output_format == "direct" and not config.extraction.prompt_template:
+        raise ValueError(
+            "extraction.prompt_template is required when output_format is 'direct'."
+        )
 
     return config

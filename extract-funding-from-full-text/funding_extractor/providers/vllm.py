@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import threading
@@ -10,12 +11,116 @@ from langextract.core.types import ScoredOutput
 
 from funding_extractor.exceptions import ProviderConfigurationError
 from funding_extractor.providers.base import BaseProvider, ModelProvider
-from funding_extractor.providers.vllm_config import VLLMConfig, load_vllm_config
+from funding_extractor.providers.vllm_config import (
+    VLLMConfig,
+    VLLMExtractionConfig,
+    load_vllm_config,
+)
 
 logger = logging.getLogger(__name__)
 
 _THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
 _UNCLOSED_THINK_PATTERN = re.compile(r"<think>.*", re.DOTALL)
+_FENCED_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_first_fenced_block(text: str) -> str:
+    """Extract the first fenced code block, discarding everything after it."""
+    match = _FENCED_BLOCK_PATTERN.search(text)
+    if not match:
+        return text
+    json_content = match.group(1).strip()
+    return f"```json\n{json_content}\n```"
+
+
+def _convert_funder_array_to_extractions(funders: list[dict]) -> list[dict]:
+    """Convert custom prompt funder array to langextract flat extractions format.
+
+    Input:  [{"funder_name": "NSF", "awards": [{"funding_scheme": [...], "award_ids": [...], "award_title": [...]}]}]
+    Output: [{"class": "funder_name", "text": "NSF"}, {"class": "award_ids", "text": "123", "attributes": {...}}, ...]
+    """
+    extractions: list[dict] = []
+    for funder in funders:
+        funder_name = funder.get("funder_name")
+        extractions.append({"class": "funder_name", "text": funder_name})
+        for award in funder.get("awards", []):
+            schemes = award.get("funding_scheme", []) or []
+            first_scheme = schemes[0] if schemes else None
+            for scheme in schemes:
+                entry: dict = {
+                    "class": "funding_scheme",
+                    "text": scheme,
+                    "attributes": {"funder_name": funder_name},
+                }
+                extractions.append(entry)
+            for aid in award.get("award_ids", []) or []:
+                entry = {
+                    "class": "award_ids",
+                    "text": aid,
+                    "attributes": {"funder_name": funder_name},
+                }
+                if first_scheme:
+                    entry["attributes"]["funding_scheme"] = first_scheme
+                extractions.append(entry)
+            for title in award.get("award_title", []) or []:
+                entry = {
+                    "class": "award_title",
+                    "text": title,
+                    "attributes": {"funder_name": funder_name},
+                }
+                if first_scheme:
+                    entry["attributes"]["funding_scheme"] = first_scheme
+                extractions.append(entry)
+    return extractions
+
+
+class OutputCleaningModel(BaseLanguageModel):
+    """Wraps a language model to intercept output before langextract's parser.
+
+    Extracts the first fenced JSON block (preventing Q&A repetition) and
+    optionally converts the custom funder-array format to langextract's
+    flat extractions format.
+    """
+
+    def __init__(self, wrapped: BaseLanguageModel, extraction_config: VLLMExtractionConfig) -> None:
+        super().__init__()
+        self._wrapped = wrapped
+        self._extraction_config = extraction_config
+
+    def infer(
+        self, batch_prompts: Sequence[str], **kwargs: Any
+    ) -> Iterator[Sequence[ScoredOutput]]:
+        for batch in self._wrapped.infer(batch_prompts, **kwargs):
+            yield [
+                ScoredOutput(score=so.score, output=self._clean(so.output))
+                for so in batch
+            ]
+
+    def merge_kwargs(self, kwargs: dict) -> dict:
+        return self._wrapped.merge_kwargs(kwargs)
+
+    def _clean(self, text: str) -> str:
+        # Step 1: Extract first fenced block
+        text = _extract_first_fenced_block(text)
+
+        # Step 2+3: Auto-detect and convert if output_format is "direct"
+        if self._extraction_config.output_format == "direct":
+            match = _FENCED_BLOCK_PATTERN.search(text)
+            if match:
+                try:
+                    parsed = json.loads(match.group(1))
+                    if isinstance(parsed, list) and parsed:
+                        # Check if already in langextract format
+                        first = parsed[0]
+                        if isinstance(first, dict) and "class" in first and "text" in first:
+                            return text  # Already langextract format
+                        # Convert funder array → langextract extractions
+                        extractions = _convert_funder_array_to_extractions(parsed)
+                        return f"```json\n{json.dumps(extractions)}\n```"
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    pass  # Return cleaned text as-is; langextract will handle the error
+
+        return text
 
 
 class VLLMLanguageModel(BaseLanguageModel):
@@ -31,6 +136,7 @@ class VLLMLanguageModel(BaseLanguageModel):
         self._max_tokens = config.sampling.max_tokens
         self._enable_thinking = config.sampling.enable_thinking
         self._presence_penalty = config.sampling.presence_penalty
+        self._stop_sequences = config.extraction.stop_sequences
         self._lora_request = self._build_lora_request(config)
         self._reasoning_traces: list[str] = []
         self._reasoning_lock = threading.Lock()
@@ -109,13 +215,16 @@ class VLLMLanguageModel(BaseLanguageModel):
         from vllm import SamplingParams
 
         merged = self.merge_kwargs(kwargs)
-        sampling_params = SamplingParams(
-            temperature=merged.get("temperature", self._temperature),
-            top_p=merged.get("top_p", self._top_p),
-            top_k=merged.get("top_k", self._top_k),
-            max_tokens=merged.get("max_output_tokens", self._max_tokens),
-            presence_penalty=merged.get("presence_penalty", self._presence_penalty),
-        )
+        sp_kwargs: dict[str, Any] = {
+            "temperature": merged.get("temperature", self._temperature),
+            "top_p": merged.get("top_p", self._top_p),
+            "top_k": merged.get("top_k", self._top_k),
+            "max_tokens": merged.get("max_output_tokens", self._max_tokens),
+            "presence_penalty": merged.get("presence_penalty", self._presence_penalty),
+        }
+        if self._stop_sequences:
+            sp_kwargs["stop"] = self._stop_sequences
+        sampling_params = SamplingParams(**sp_kwargs)
 
         engine = self._get_or_create_engine(self._config)
         outputs = engine.generate(
@@ -135,9 +244,10 @@ def _patch_client_for_thinking(
     language_model: Any,
     enable_thinking: bool,
     thinking_budget: Optional[int] = None,
+    stop_sequences: Optional[list[str]] = None,
 ) -> None:
     """Wrap the OpenAI client's create method to inject chat_template_kwargs
-    for Qwen3 thinking control and capture reasoning content from responses."""
+    for Qwen3 thinking control, stop sequences, and capture reasoning content."""
     original_create = language_model._client.chat.completions.create
 
     @wraps(original_create)
@@ -145,6 +255,8 @@ def _patch_client_for_thinking(
         extra_body = kwargs.pop("extra_body", {}) or {}
         extra_body["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
         kwargs["extra_body"] = extra_body
+        if stop_sequences:
+            kwargs.setdefault("stop", stop_sequences)
         response = original_create(**kwargs)
         if enable_thinking and response.choices:
             reasoning = getattr(response.choices[0].message, "reasoning", None)
@@ -200,6 +312,11 @@ class VLLMProvider(BaseProvider):
         else:
             self._language_model = VLLMLanguageModel(self._vllm_config)
 
+        if self._vllm_config.extraction.output_format == "direct":
+            self._language_model = OutputCleaningModel(
+                self._language_model, self._vllm_config.extraction
+            )
+
     def _build_online_model(self):
         from langextract.providers.openai import OpenAILanguageModel
 
@@ -228,6 +345,7 @@ class VLLMProvider(BaseProvider):
             lm,
             self._vllm_config.sampling.enable_thinking,
             thinking_budget=self._vllm_config.sampling.thinking_budget,
+            stop_sequences=self._vllm_config.extraction.stop_sequences or None,
         )
 
         return lm
@@ -258,6 +376,8 @@ class VLLMProvider(BaseProvider):
     def drain_reasoning(self) -> list[str]:
         """Return and clear accumulated reasoning traces from the language model."""
         lm = self._language_model
+        if isinstance(lm, OutputCleaningModel):
+            lm = lm._wrapped
         with lm._reasoning_lock:
             traces = list(lm._reasoning_traces)
             lm._reasoning_traces.clear()

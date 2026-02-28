@@ -43,10 +43,12 @@ import torch
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_dataset
 from huggingface_hub import login
 
+from funding_extractor.config.loader import get_config_path
 from funding_extractor.entities.extraction import (
     StructuredExtractionService,
     build_provider_settings,
 )
+from funding_extractor.providers.vllm_config import VLLMConfig, load_vllm_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -351,6 +353,7 @@ def run_stage2(
     vllm_config_path: str,
     workers: int = 1,
     mode: str = "offline",
+    vllm_config: Optional[VLLMConfig] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run vLLM entity extraction on all statements."""
     if mode == "offline" and workers > 1:
@@ -368,7 +371,15 @@ def run_stage2(
         vllm_config_path=vllm_config_path,
         skip_model_validation=True,
     )
-    service = StructuredExtractionService(provider_settings=provider_settings)
+
+    prompt_file = None
+    if vllm_config and vllm_config.extraction.prompt_template:
+        prompt_file = str(get_config_path("prompts", vllm_config.extraction.prompt_template))
+
+    service = StructuredExtractionService(
+        provider_settings=provider_settings,
+        prompt_file=prompt_file,
+    )
 
     total_statements = sum(
         len(doc["statements"])
@@ -540,6 +551,9 @@ def main() -> None:
         logger.error("No config_name: set benchmark.config_name in YAML or pass --config-name")
         sys.exit(1)
 
+    # Load typed config for extraction settings (prompt override, output format)
+    vllm_config = load_vllm_config(vllm_config_path)
+
     logger.info("=== Stage 2: vLLM Entity Extraction (mode=%s, model=%s) ===", mode, model_id)
     server_proc = None
     try:
@@ -551,6 +565,7 @@ def main() -> None:
             vllm_config_path=vllm_config_path,
             workers=workers,
             mode=mode,
+            vllm_config=vllm_config,
         )
     finally:
         if server_proc is not None:

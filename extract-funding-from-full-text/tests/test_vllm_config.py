@@ -7,6 +7,7 @@ from funding_extractor.providers.vllm_config import (
     VLLMBenchmarkConfig,
     VLLMConfig,
     VLLMEngineConfig,
+    VLLMExtractionConfig,
     VLLMLoRAConfig,
     VLLMSamplingConfig,
     VLLMServerConfig,
@@ -278,6 +279,10 @@ class TestQwenConfigParity:
         # Benchmark
         assert config.benchmark.config_name == "qwen3-8b-entities"
         assert config.benchmark.workers == 64
+        # Extraction
+        assert config.extraction.output_format == "langextract"
+        assert config.extraction.prompt_template is None
+        assert config.extraction.stop_sequences == []
 
     def test_qwen3_8b_thinking_config_matches_current_thinking(self):
         """Field-by-field parity with write_vllm_config(enable_thinking=True)."""
@@ -310,6 +315,10 @@ class TestQwenConfigParity:
         # Benchmark
         assert config.benchmark.config_name == "qwen3-8b-entities-thinking"
         assert config.benchmark.workers == 64
+        # Extraction
+        assert config.extraction.output_format == "langextract"
+        assert config.extraction.prompt_template is None
+        assert config.extraction.stop_sequences == []
 
 
 class TestLlamaConfigs:
@@ -330,6 +339,9 @@ class TestLlamaConfigs:
         assert config.server.timeout == 120
         assert config.benchmark.config_name == "llama-3.1-8b-entities"
         assert config.benchmark.workers == 64
+        assert config.extraction.output_format == "langextract"
+        assert config.extraction.prompt_template is None
+        assert config.extraction.stop_sequences == []
 
     def test_llama_3_1_8b_lora_config_loads(self):
         config = load_vllm_config(str(CONFIGS_DIR / "llama-3.1-8b-lora.yaml"))
@@ -346,6 +358,9 @@ class TestLlamaConfigs:
         assert config.engine.max_model_len == 4096
         assert config.engine.gpu_memory_utilization == 0.9
         assert config.benchmark.config_name == "llama-3.1-8b-lora-entities"
+        assert config.extraction.output_format == "direct"
+        assert config.extraction.prompt_template == "cometadata-funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft_prompt.txt"
+        assert config.extraction.stop_sequences == ["\nQ:"]
 
 
 class TestDefaultConfig:
@@ -361,3 +376,34 @@ class TestDefaultConfig:
         assert config.model == "any-model"
         assert config.mode == "offline"
         assert config.benchmark.config_name is None
+
+
+class TestExtractionConfig:
+    def test_extraction_config_defaults(self, tmp_path):
+        data = {"model": "some-model"}
+        config = load_vllm_config(_write_config(tmp_path, data))
+        assert config.extraction.output_format == "langextract"
+        assert config.extraction.prompt_template is None
+        assert config.extraction.stop_sequences == []
+
+    def test_extraction_config_direct_mode(self, tmp_path):
+        data = {
+            "model": "some-model",
+            "extraction": {
+                "output_format": "direct",
+                "prompt_template": "cometadata-funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft_prompt.txt",
+                "stop_sequences": ["\nQ:"],
+            },
+        }
+        config = load_vllm_config(_write_config(tmp_path, data))
+        assert config.extraction.output_format == "direct"
+        assert config.extraction.prompt_template == "cometadata-funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft_prompt.txt"
+        assert config.extraction.stop_sequences == ["\nQ:"]
+
+    def test_extraction_config_direct_missing_prompt_raises(self, tmp_path):
+        data = {
+            "model": "some-model",
+            "extraction": {"output_format": "direct"},
+        }
+        with pytest.raises(ValueError, match="prompt_template"):
+            load_vllm_config(_write_config(tmp_path, data))
