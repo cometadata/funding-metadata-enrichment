@@ -13,6 +13,8 @@ from funding_extractor.providers.vllm import (
     OutputCleaningModel,
     _convert_funder_array_to_extractions,
     _extract_first_fenced_block,
+    _normalize_extractions,
+    _to_scalar,
 )
 from funding_extractor.providers.vllm_config import VLLMExtractionConfig
 
@@ -162,6 +164,82 @@ class TestConvertFunderArrayToExtractions:
         award_entry = [e for e in result if e["class"] == "award_ids"][0]
         assert "funding_scheme" not in award_entry["attributes"]
 
+    def test_funder_name_as_list_coerced_to_scalar(self):
+        """Model sometimes wraps funder_name in a list — must be coerced."""
+        funders = [
+            {
+                "funder_name": ["NSF"],
+                "awards": [{"funding_scheme": [], "award_ids": ["123"], "award_title": []}],
+            }
+        ]
+        result = _convert_funder_array_to_extractions(funders)
+        assert result[0]["text"] == "NSF"
+        assert result[1]["attributes"]["funder_name"] == "NSF"
+
+    def test_nested_award_ids_flattened(self):
+        """Model outputs nested list for award_ids — must be flattened."""
+        funders = [
+            {
+                "funder_name": "NSF",
+                "awards": [{"funding_scheme": [], "award_ids": [["123", "456"]], "award_title": []}],
+            }
+        ]
+        result = _convert_funder_array_to_extractions(funders)
+        award_ids = [e for e in result if e["class"] == "award_ids"]
+        assert len(award_ids) == 2
+        assert award_ids[0]["text"] == "123"
+        assert award_ids[1]["text"] == "456"
+
+
+# --- _to_scalar / _normalize_extractions tests ---
+
+
+class TestToScalar:
+    def test_string_passthrough(self):
+        assert _to_scalar("NSF") == "NSF"
+
+    def test_list_unwraps_first(self):
+        assert _to_scalar(["NSF"]) == "NSF"
+
+    def test_nested_list(self):
+        assert _to_scalar([["NSF"]]) == "NSF"
+
+    def test_empty_list(self):
+        assert _to_scalar([]) == ""
+
+    def test_none_passthrough(self):
+        assert _to_scalar(None) is None
+
+    def test_int_passthrough(self):
+        assert _to_scalar(42) == 42
+
+
+class TestNormalizeExtractions:
+    def test_scalar_text_unchanged(self):
+        entries = [{"class": "funder_name", "text": "NSF"}]
+        assert _normalize_extractions(entries) == entries
+
+    def test_list_text_flattened(self):
+        entries = [
+            {"class": "award_ids", "text": ["123", "456"], "attributes": {"funder_name": "NSF"}}
+        ]
+        result = _normalize_extractions(entries)
+        assert len(result) == 2
+        assert result[0]["text"] == "123"
+        assert result[1]["text"] == "456"
+        assert result[0]["attributes"] == {"funder_name": "NSF"}
+
+    def test_mixed_entries(self):
+        entries = [
+            {"class": "funder_name", "text": "NSF"},
+            {"class": "award_ids", "text": ["123", "456"]},
+        ]
+        result = _normalize_extractions(entries)
+        assert len(result) == 3
+        assert result[0]["text"] == "NSF"
+        assert result[1]["text"] == "123"
+        assert result[2]["text"] == "456"
+
 
 # --- OutputCleaningModel tests ---
 
@@ -227,6 +305,30 @@ class TestOutputCleaningModel:
         parsed = json.loads(output_text.strip("` \njson"))
         assert "funder_name" in parsed[0]  # Original format preserved
         assert "class" not in parsed[0]
+
+    def test_hybrid_format_list_text_normalized(self):
+        """Model outputs langextract-like format but with list text values — must be normalized."""
+        hybrid_json = json.dumps([
+            {"class": "funder_name", "text": "NSF"},
+            {"class": "award_ids", "text": ["123", "456"], "attributes": {"funder_name": "NSF"}},
+            {"class": "funding_scheme", "text": ["CAREER"], "attributes": {"funder_name": "NSF"}},
+        ])
+        raw_output = f"```json\n{hybrid_json}\n```"
+        fake = _FakeModel([raw_output])
+        config = VLLMExtractionConfig(output_format="direct", prompt_template="test.txt")
+        wrapper = OutputCleaningModel(fake, config)
+
+        results = list(wrapper.infer(["test prompt"]))
+        output_text = results[0][0].output
+        parsed = json.loads(output_text.strip("` \njson"))
+        # List values should be flattened into individual entries
+        texts = [e["text"] for e in parsed]
+        assert all(not isinstance(t, list) for t in texts), f"Found list text values: {texts}"
+        assert "NSF" in texts
+        assert "123" in texts
+        assert "456" in texts
+        assert "CAREER" in texts
+        assert len(parsed) == 4  # 1 funder + 2 award_ids (flattened from list) + 1 scheme (flattened from list)
 
 
 # --- Stop sequences tests ---

@@ -33,6 +33,45 @@ def _extract_first_fenced_block(text: str) -> str:
     return f"```json\n{json_content}\n```"
 
 
+def _to_scalar(value: Any) -> Any:
+    """Coerce a value to a scalar suitable for langextract's text field.
+
+    Lists are unwrapped (first element), non-string/int/float are stringified.
+    """
+    if isinstance(value, list):
+        return _to_scalar(value[0]) if value else ""
+    if isinstance(value, (str, int, float)) or value is None:
+        return value
+    return str(value)
+
+
+def _flatten_list(value: Any) -> list:
+    """Ensure value is a flat list of scalars, flattening nested lists."""
+    if not isinstance(value, list):
+        return [value] if value else []
+    result: list = []
+    for item in value:
+        if isinstance(item, list):
+            result.extend(_flatten_list(item))
+        else:
+            result.append(item)
+    return result
+
+
+def _normalize_extractions(extractions: list[dict]) -> list[dict]:
+    """Ensure all text values are scalars, flattening lists into individual entries."""
+    normalized: list[dict] = []
+    for entry in extractions:
+        text = entry.get("text")
+        if isinstance(text, list):
+            for item in text:
+                new_entry = {**entry, "text": _to_scalar(item)}
+                normalized.append(new_entry)
+        else:
+            normalized.append(entry)
+    return normalized
+
+
 def _convert_funder_array_to_extractions(funders: list[dict]) -> list[dict]:
     """Convert custom prompt funder array to langextract flat extractions format.
 
@@ -41,31 +80,31 @@ def _convert_funder_array_to_extractions(funders: list[dict]) -> list[dict]:
     """
     extractions: list[dict] = []
     for funder in funders:
-        funder_name = funder.get("funder_name")
+        funder_name = _to_scalar(funder.get("funder_name"))
         extractions.append({"class": "funder_name", "text": funder_name})
-        for award in funder.get("awards", []):
-            schemes = award.get("funding_scheme", []) or []
-            first_scheme = schemes[0] if schemes else None
+        for award in funder.get("awards", []) or []:
+            schemes = _flatten_list(award.get("funding_scheme", []))
+            first_scheme = _to_scalar(schemes[0]) if schemes else None
             for scheme in schemes:
                 entry: dict = {
                     "class": "funding_scheme",
-                    "text": scheme,
+                    "text": _to_scalar(scheme),
                     "attributes": {"funder_name": funder_name},
                 }
                 extractions.append(entry)
-            for aid in award.get("award_ids", []) or []:
+            for aid in _flatten_list(award.get("award_ids", [])):
                 entry = {
                     "class": "award_ids",
-                    "text": aid,
+                    "text": _to_scalar(aid),
                     "attributes": {"funder_name": funder_name},
                 }
                 if first_scheme:
                     entry["attributes"]["funding_scheme"] = first_scheme
                 extractions.append(entry)
-            for title in award.get("award_title", []) or []:
+            for title in _flatten_list(award.get("award_title", [])):
                 entry = {
                     "class": "award_title",
-                    "text": title,
+                    "text": _to_scalar(title),
                     "attributes": {"funder_name": funder_name},
                 }
                 if first_scheme:
@@ -113,7 +152,9 @@ class OutputCleaningModel(BaseLanguageModel):
                         # Check if already in langextract format
                         first = parsed[0]
                         if isinstance(first, dict) and "class" in first and "text" in first:
-                            return text  # Already langextract format
+                            # Normalize any list text values into individual entries
+                            normalized = _normalize_extractions(parsed)
+                            return f"```json\n{json.dumps(normalized)}\n```"
                         # Convert funder array → langextract extractions
                         extractions = _convert_funder_array_to_extractions(parsed)
                         return f"```json\n{json.dumps(extractions)}\n```"
