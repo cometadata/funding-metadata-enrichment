@@ -36,7 +36,7 @@ benchmark:
   workers: 64
 
 extraction:
-  prompt_template: "cometadata-funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft_prompt.txt"
+  prompt_template: "extraction_prompt.txt"
   output_format: "direct"
   stop_sequences:
     - "\nQ:"
