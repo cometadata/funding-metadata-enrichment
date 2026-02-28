@@ -359,7 +359,7 @@ class TestLlamaConfigs:
         assert config.engine.gpu_memory_utilization == 0.9
         assert config.benchmark.config_name == "llama-3.1-8b-lora-entities"
         assert config.extraction.output_format == "direct"
-        assert config.extraction.prompt_template == "cometadata-funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft_prompt.txt"
+        assert config.extraction.prompt_template == "extraction_prompt.txt"
         assert config.extraction.stop_sequences == ["\nQ:"]
 
 

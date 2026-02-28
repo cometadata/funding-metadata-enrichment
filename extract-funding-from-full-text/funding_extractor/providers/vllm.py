@@ -99,6 +99,33 @@ def _to_resolver_format(extractions: list[dict]) -> list[dict]:
     return result
 
 
+def _sanitize_resolver_values(items: list[dict]) -> list[dict]:
+    """Sanitize resolver-format entries so every text value is a scalar.
+
+    The resolver rejects list/None text values.  This splits list values into
+    separate entries and converts None to empty string.
+    """
+    result: list[dict] = []
+    for group in items:
+        for key, value in group.items():
+            if key.endswith("_attributes"):
+                continue  # handled alongside its parent key
+            attr_key = f"{key}_attributes"
+            attrs = group.get(attr_key)
+            if isinstance(value, list):
+                for item in _flatten_list(value):
+                    entry: dict = {key: _to_scalar(item)}
+                    if attrs:
+                        entry[attr_key] = attrs
+                    result.append(entry)
+            else:
+                entry = {key: _to_scalar(value)}
+                if attrs:
+                    entry[attr_key] = attrs
+                result.append(entry)
+    return result
+
+
 def _convert_funder_array_to_extractions(funders: list[dict]) -> list[dict]:
     """Convert custom prompt funder array to langextract flat extractions format.
 
@@ -175,18 +202,37 @@ class OutputCleaningModel(BaseLanguageModel):
             if match:
                 try:
                     parsed = json.loads(match.group(1))
-                    if isinstance(parsed, list) and parsed:
-                        # Check if already in langextract class/text format
-                        first = parsed[0]
+
+                    # Unwrap dict wrapper (e.g. {"extractions": [...]})
+                    wrapper_key = None
+                    items = parsed
+                    if isinstance(parsed, dict):
+                        for k, v in parsed.items():
+                            if isinstance(v, list):
+                                wrapper_key = k
+                                items = v
+                                break
+                        else:
+                            return text  # dict with no list value; let langextract handle
+
+                    if isinstance(items, list) and items:
+                        first = items[0]
                         if isinstance(first, dict) and "class" in first and "text" in first:
-                            # Normalize any list text values into individual entries
-                            normalized = _normalize_extractions(parsed)
+                            # class/text intermediate format → normalize + convert
+                            normalized = _normalize_extractions(items)
                             resolver = _to_resolver_format(normalized)
-                            return f"```json\n{json.dumps(resolver)}\n```"
-                        # Convert funder array → langextract resolver format
-                        extractions = _convert_funder_array_to_extractions(parsed)
-                        resolver = _to_resolver_format(extractions)
-                        return f"```json\n{json.dumps(resolver)}\n```"
+                        elif isinstance(first, dict) and "awards" in first:
+                            # Custom funder array format → convert
+                            extractions = _convert_funder_array_to_extractions(items)
+                            resolver = _to_resolver_format(extractions)
+                        else:
+                            # Already in resolver format; sanitize list/None values
+                            resolver = _sanitize_resolver_values(items)
+
+                        # Always wrap — langextract's format_handler expects
+                        # {"extractions": [...]} by default.
+                        wk = wrapper_key or "extractions"
+                        return f"```json\n{json.dumps({wk: resolver})}\n```"
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass  # Return cleaned text as-is; langextract will handle the error
 
