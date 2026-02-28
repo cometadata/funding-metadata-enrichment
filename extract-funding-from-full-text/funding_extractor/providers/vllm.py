@@ -75,6 +75,30 @@ def _normalize_extractions(extractions: list[dict]) -> list[dict]:
     return normalized
 
 
+def _to_resolver_format(extractions: list[dict]) -> list[dict]:
+    """Convert intermediate class/text format to langextract resolver format.
+
+    langextract's resolver expects each extraction as a dict where the key is
+    the extraction class name and the value is the extraction text.  Attributes
+    use a ``<class>_attributes`` key (matching ``ATTRIBUTE_SUFFIX``).
+
+    Input:  [{"class": "funder_name", "text": "NSF"},
+             {"class": "award_ids", "text": "123", "attributes": {"funder_name": "NSF"}}]
+    Output: [{"funder_name": "NSF"},
+             {"award_ids": "123", "award_ids_attributes": {"funder_name": "NSF"}}]
+    """
+    result: list[dict] = []
+    for entry in extractions:
+        cls = entry.get("class", "")
+        text = _to_scalar(entry.get("text"))
+        group: dict = {cls: text}
+        attrs = entry.get("attributes")
+        if attrs:
+            group[f"{cls}_attributes"] = attrs
+        result.append(group)
+    return result
+
+
 def _convert_funder_array_to_extractions(funders: list[dict]) -> list[dict]:
     """Convert custom prompt funder array to langextract flat extractions format.
 
@@ -152,15 +176,17 @@ class OutputCleaningModel(BaseLanguageModel):
                 try:
                     parsed = json.loads(match.group(1))
                     if isinstance(parsed, list) and parsed:
-                        # Check if already in langextract format
+                        # Check if already in langextract class/text format
                         first = parsed[0]
                         if isinstance(first, dict) and "class" in first and "text" in first:
                             # Normalize any list text values into individual entries
                             normalized = _normalize_extractions(parsed)
-                            return f"```json\n{json.dumps(normalized)}\n```"
-                        # Convert funder array → langextract extractions
+                            resolver = _to_resolver_format(normalized)
+                            return f"```json\n{json.dumps(resolver)}\n```"
+                        # Convert funder array → langextract resolver format
                         extractions = _convert_funder_array_to_extractions(parsed)
-                        return f"```json\n{json.dumps(extractions)}\n```"
+                        resolver = _to_resolver_format(extractions)
+                        return f"```json\n{json.dumps(resolver)}\n```"
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass  # Return cleaned text as-is; langextract will handle the error
 

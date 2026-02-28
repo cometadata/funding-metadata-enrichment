@@ -14,6 +14,7 @@ from funding_extractor.providers.vllm import (
     _convert_funder_array_to_extractions,
     _extract_first_fenced_block,
     _normalize_extractions,
+    _to_resolver_format,
     _to_scalar,
 )
 from funding_extractor.providers.vllm_config import VLLMExtractionConfig
@@ -261,6 +262,49 @@ class _FakeModel(BaseLanguageModel):
         return kwargs
 
 
+class TestToResolverFormat:
+    def test_basic_conversion(self):
+        entries = [
+            {"class": "funder_name", "text": "NSF"},
+            {"class": "award_ids", "text": "123", "attributes": {"funder_name": "NSF"}},
+        ]
+        result = _to_resolver_format(entries)
+        assert result[0] == {"funder_name": "NSF"}
+        assert result[1] == {"award_ids": "123", "award_ids_attributes": {"funder_name": "NSF"}}
+
+    def test_no_attributes(self):
+        entries = [{"class": "funder_name", "text": "NSF"}]
+        result = _to_resolver_format(entries)
+        assert result == [{"funder_name": "NSF"}]
+
+    def test_none_text_becomes_empty_string(self):
+        entries = [{"class": "funder_name", "text": None}]
+        result = _to_resolver_format(entries)
+        assert result == [{"funder_name": ""}]
+
+    def test_multiple_classes_with_attributes(self):
+        entries = [
+            {"class": "funder_name", "text": "ERC"},
+            {"class": "funding_scheme", "text": "Horizon 2020", "attributes": {"funder_name": "ERC"}},
+            {"class": "award_ids", "text": "101053661", "attributes": {"funder_name": "ERC", "funding_scheme": "Horizon 2020"}},
+        ]
+        result = _to_resolver_format(entries)
+        assert result[0] == {"funder_name": "ERC"}
+        assert result[1] == {
+            "funding_scheme": "Horizon 2020",
+            "funding_scheme_attributes": {"funder_name": "ERC"},
+        }
+        assert result[2] == {
+            "award_ids": "101053661",
+            "award_ids_attributes": {"funder_name": "ERC", "funding_scheme": "Horizon 2020"},
+        }
+
+    def test_empty_attributes_omitted(self):
+        entries = [{"class": "funder_name", "text": "NSF", "attributes": {}}]
+        result = _to_resolver_format(entries)
+        assert result == [{"funder_name": "NSF"}]
+
+
 class TestOutputCleaningModel:
     def test_delegates_infer(self):
         funder_json = json.dumps([{"funder_name": "NSF", "awards": []}])
@@ -271,14 +315,14 @@ class TestOutputCleaningModel:
 
         results = list(wrapper.infer(["test prompt"]))
         assert len(results) == 1
-        # Should have converted to langextract format
+        # Should have converted to langextract resolver format
         output_text = results[0][0].output
         parsed = json.loads(output_text.strip("` \njson"))
-        assert parsed[0]["class"] == "funder_name"
-        assert parsed[0]["text"] == "NSF"
+        assert "funder_name" in parsed[0]
+        assert parsed[0]["funder_name"] == "NSF"
 
-    def test_langextract_format_passthrough(self):
-        """When output is already in langextract format, skip conversion."""
+    def test_langextract_class_text_format_converted(self):
+        """When output is in class/text format, convert to resolver format."""
         lx_json = json.dumps([{"class": "funder_name", "text": "NSF"}])
         raw_output = f"```json\n{lx_json}\n```"
         fake = _FakeModel([raw_output])
@@ -288,8 +332,7 @@ class TestOutputCleaningModel:
         results = list(wrapper.infer(["test prompt"]))
         output_text = results[0][0].output
         parsed = json.loads(output_text.strip("` \njson"))
-        assert parsed[0]["class"] == "funder_name"
-        assert parsed[0]["text"] == "NSF"
+        assert parsed[0] == {"funder_name": "NSF"}
 
     def test_langextract_mode_no_conversion(self):
         """When output_format is 'langextract', no conversion happens."""
@@ -307,7 +350,7 @@ class TestOutputCleaningModel:
         assert "class" not in parsed[0]
 
     def test_hybrid_format_list_text_normalized(self):
-        """Model outputs langextract-like format but with list text values — must be normalized."""
+        """Model outputs class/text format but with list text values — must be normalized and converted."""
         hybrid_json = json.dumps([
             {"class": "funder_name", "text": "NSF"},
             {"class": "award_ids", "text": ["123", "456"], "attributes": {"funder_name": "NSF"}},
@@ -321,14 +364,45 @@ class TestOutputCleaningModel:
         results = list(wrapper.infer(["test prompt"]))
         output_text = results[0][0].output
         parsed = json.loads(output_text.strip("` \njson"))
+        # Should be in resolver format now
+        assert parsed[0] == {"funder_name": "NSF"}
         # List values should be flattened into individual entries
-        texts = [e["text"] for e in parsed]
-        assert all(not isinstance(t, list) for t in texts), f"Found list text values: {texts}"
-        assert "NSF" in texts
-        assert "123" in texts
-        assert "456" in texts
-        assert "CAREER" in texts
-        assert len(parsed) == 4  # 1 funder + 2 award_ids (flattened from list) + 1 scheme (flattened from list)
+        award_ids = [e for e in parsed if "award_ids" in e]
+        assert len(award_ids) == 2
+        assert award_ids[0]["award_ids"] == "123"
+        assert award_ids[1]["award_ids"] == "456"
+        # Attributes should use _attributes suffix
+        assert award_ids[0]["award_ids_attributes"] == {"funder_name": "NSF"}
+        schemes = [e for e in parsed if "funding_scheme" in e]
+        assert len(schemes) == 1
+        assert schemes[0]["funding_scheme"] == "CAREER"
+
+    def test_funder_with_awards_produces_valid_resolver_format(self):
+        """End-to-end: funder array with awards converts to resolver format with correct attribute keys."""
+        funder_json = json.dumps([{
+            "funder_name": "NSF",
+            "awards": [{"funding_scheme": ["CAREER"], "award_ids": ["123"], "award_title": []}],
+        }])
+        raw_output = f"```json\n{funder_json}\n```"
+        fake = _FakeModel([raw_output])
+        config = VLLMExtractionConfig(output_format="direct", prompt_template="test.txt")
+        wrapper = OutputCleaningModel(fake, config)
+
+        results = list(wrapper.infer(["test prompt"]))
+        output_text = results[0][0].output
+        parsed = json.loads(output_text.strip("` \njson"))
+        # Verify no bare "attributes" key that would crash langextract's resolver
+        for entry in parsed:
+            assert "attributes" not in entry, f"Bare 'attributes' key found: {entry}"
+            assert "class" not in entry, f"Bare 'class' key found: {entry}"
+            assert "text" not in entry, f"Bare 'text' key found: {entry}"
+        # Verify correct structure
+        assert parsed[0] == {"funder_name": "NSF"}
+        assert parsed[1] == {"funding_scheme": "CAREER", "funding_scheme_attributes": {"funder_name": "NSF"}}
+        assert parsed[2] == {
+            "award_ids": "123",
+            "award_ids_attributes": {"funder_name": "NSF", "funding_scheme": "CAREER"},
+        }
 
 
 # --- Stop sequences tests ---
