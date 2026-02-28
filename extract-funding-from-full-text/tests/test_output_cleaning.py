@@ -150,8 +150,8 @@ class TestConvertFunderArrayToExtractions:
             }
         ]
         result = _convert_funder_array_to_extractions(funders)
-        assert result[0] == {"class": "funder_name", "text": None}
-        assert result[1]["attributes"]["funder_name"] is None
+        assert result[0] == {"class": "funder_name", "text": ""}
+        assert result[1]["attributes"]["funder_name"] == ""
 
     def test_no_scheme_omits_funding_scheme_from_attributes(self):
         funders = [
@@ -207,8 +207,8 @@ class TestToScalar:
     def test_empty_list(self):
         assert _to_scalar([]) == ""
 
-    def test_none_passthrough(self):
-        assert _to_scalar(None) is None
+    def test_none_returns_empty_string(self):
+        assert _to_scalar(None) == ""
 
     def test_int_passthrough(self):
         assert _to_scalar(42) == 42

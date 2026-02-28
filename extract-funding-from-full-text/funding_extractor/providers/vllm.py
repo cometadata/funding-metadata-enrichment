@@ -36,11 +36,14 @@ def _extract_first_fenced_block(text: str) -> str:
 def _to_scalar(value: Any) -> Any:
     """Coerce a value to a scalar suitable for langextract's text field.
 
-    Lists are unwrapped (first element), non-string/int/float are stringified.
+    Lists are unwrapped (first element), None becomes empty string,
+    non-string/int/float are stringified.
     """
     if isinstance(value, list):
         return _to_scalar(value[0]) if value else ""
-    if isinstance(value, (str, int, float)) or value is None:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float)):
         return value
     return str(value)
 
