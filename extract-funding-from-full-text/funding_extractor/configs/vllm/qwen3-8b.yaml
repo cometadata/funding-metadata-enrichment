@@ -1,5 +1,5 @@
 model: "Qwen/Qwen3-8B"
-mode: "offline"
+mode: "online"
 
 lora:
   path: null
@@ -16,7 +16,7 @@ engine:
   enable_prefix_caching: true
 
 server:
-  url: null
+  url: "http://localhost:8000/v1"
   api_key: null
   timeout: 120
 
