@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 _THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
 _UNCLOSED_THINK_PATTERN = re.compile(r"<think>.*", re.DOTALL)
 _FENCED_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
+_INVALID_ESCAPE_PATTERN = re.compile(r'\\(?!["\\/bfnrtu])')
+
+
+def _fix_json_escapes(text: str) -> str:
+    """Replace invalid JSON backslash escapes with double-backslash.
+
+    Models often produce award IDs like ``URF\\R1\\211106`` where the
+    backslashes are not valid JSON escapes (``\\R``, ``\\2``).  This
+    doubles unrecognised escapes so ``json.loads`` can parse them.
+    """
+    return _INVALID_ESCAPE_PATTERN.sub(r"\\\\", text)
 
 
 def _extract_first_fenced_block(text: str) -> str:
@@ -201,7 +212,7 @@ class OutputCleaningModel(BaseLanguageModel):
             match = _FENCED_BLOCK_PATTERN.search(text)
             if match:
                 try:
-                    parsed = json.loads(match.group(1))
+                    parsed = json.loads(_fix_json_escapes(match.group(1)))
 
                     # Unwrap dict wrapper (e.g. {"extractions": [...]})
                     wrapper_key = None

@@ -13,6 +13,7 @@ from funding_extractor.providers.vllm import (
     OutputCleaningModel,
     _convert_funder_array_to_extractions,
     _extract_first_fenced_block,
+    _fix_json_escapes,
     _normalize_extractions,
     _sanitize_resolver_values,
     _to_resolver_format,
@@ -64,6 +65,38 @@ class TestExtractFirstFencedBlock:
         result = _extract_first_fenced_block(text)
         assert "NSF" in result
         assert result.startswith("```json\n")
+
+
+# --- _fix_json_escapes tests ---
+
+
+class TestFixJsonEscapes:
+    def test_invalid_backslash_doubled(self):
+        raw = r'"URF\R1\211106"'
+        fixed = _fix_json_escapes(raw)
+        assert fixed == r'"URF\\R1\\211106"'
+
+    def test_valid_escapes_preserved(self):
+        raw = r'"line1\nline2\ttab\"quote\\back"'
+        assert _fix_json_escapes(raw) == raw
+
+    def test_unicode_escape_preserved(self):
+        raw = r'"caf\u00e9"'
+        assert _fix_json_escapes(raw) == raw
+
+    def test_solidus_escape_preserved(self):
+        raw = r'"a\/b"'
+        assert _fix_json_escapes(raw) == raw
+
+    def test_mixed_valid_and_invalid(self):
+        raw = r'"hello\nworld\Rfoo"'
+        assert _fix_json_escapes(raw) == r'"hello\nworld\\Rfoo"'
+
+    def test_real_award_id_parseable(self):
+        raw = r'{"award_ids": "URF\R1\211106"}'
+        fixed = _fix_json_escapes(raw)
+        parsed = json.loads(fixed)
+        assert parsed["award_ids"] == "URF\\R1\\211106"
 
 
 # --- _convert_funder_array_to_extractions tests ---
@@ -466,6 +499,29 @@ class TestOutputCleaningModel:
         parsed = _parse_clean_output(results[0][0].output)
         assert "results" in parsed
         assert parsed["results"][0]["funder_name"] == "NSF"
+
+    def test_invalid_backslash_escapes_fixed(self):
+        """Award IDs with unescaped backslashes should be repaired and parsed."""
+        # Raw string as the model would produce — \R and \2 are invalid JSON escapes
+        raw_output = (
+            '```json\n'
+            '{"extractions": [{"funder_name": "Royal Society"}, '
+            '{"award_ids": "URF\\R1\\211106", '
+            '"award_ids_attributes": {"funder_name": "Royal Society"}}]}\n'
+            '```'
+        )
+        fake = _FakeModel([raw_output])
+        config = VLLMExtractionConfig(output_format="direct", prompt_template="test.txt")
+        wrapper = OutputCleaningModel(fake, config)
+
+        results = list(wrapper.infer(["test prompt"]))
+        parsed = _parse_clean_output(results[0][0].output)
+        items = parsed["extractions"]
+        funder = [e for e in items if "funder_name" in e]
+        assert funder[0]["funder_name"] == "Royal Society"
+        aids = [e for e in items if "award_ids" in e]
+        assert len(aids) == 1
+        assert "URF" in aids[0]["award_ids"]
 
 
 # --- Stop sequences tests ---
