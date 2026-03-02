@@ -29,6 +29,7 @@ Usage (local):
 
 import argparse
 import concurrent.futures
+import json
 import logging
 import os
 import subprocess
@@ -286,10 +287,17 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
         "--dtype", engine.get("dtype", "auto"),
         "--no-enable-log-requests",
     ]
-    if enable_thinking:
-        server_config = config_data.get("server", {})
-        parser = server_config.get("reasoning_parser", "deepseek_r1")
-        cmd.extend(["--reasoning-parser", parser])
+    # Always pass --reasoning-parser when configured (required for Qwen3/3.5
+    # even in non-thinking mode to handle template <think> tokens)
+    server_config = config_data.get("server", {})
+    reasoning_parser = server_config.get("reasoning_parser")
+    if reasoning_parser:
+        cmd.extend(["--reasoning-parser", reasoning_parser])
+    # When thinking is explicitly disabled, set it server-wide so the chat
+    # template emits an empty <think></think> block reliably
+    if not enable_thinking and reasoning_parser:
+        default_kwargs = json.dumps({"enable_thinking": False})
+        cmd.extend(["--default-chat-template-kwargs", default_kwargs])
     if engine.get("enforce_eager", False):
         cmd.append("--enforce-eager")
     if lora_path:

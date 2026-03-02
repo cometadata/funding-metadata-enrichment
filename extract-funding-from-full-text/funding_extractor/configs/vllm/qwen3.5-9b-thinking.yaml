@@ -29,7 +29,7 @@ sampling:
   max_tokens: 65536
   enable_thinking: true
   thinking_budget: null
-  presence_penalty: 1.5
+  presence_penalty: 0.0
   extraction_passes: 1
   batch_length: 64
 
