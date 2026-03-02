@@ -290,6 +290,8 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
         server_config = config_data.get("server", {})
         parser = server_config.get("reasoning_parser", "deepseek_r1")
         cmd.extend(["--reasoning-parser", parser])
+    if engine.get("enforce_eager", False):
+        cmd.append("--enforce-eager")
     if lora_path:
         adapter_name = lora_name or "default"
         cmd.extend([

@@ -14,6 +14,7 @@ engine:
   dtype: "auto"
   quantization: null
   enable_prefix_caching: true
+  enforce_eager: true
 
 server:
   url: "http://localhost:8000/v1"
