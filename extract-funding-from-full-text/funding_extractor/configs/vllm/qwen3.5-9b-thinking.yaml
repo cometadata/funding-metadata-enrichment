@@ -26,7 +26,7 @@ sampling:
   temperature: 1.0
   top_p: 0.95
   top_k: 20
-  max_tokens: 81920
+  max_tokens: 65536
   enable_thinking: true
   thinking_budget: null
   presence_penalty: 1.5
