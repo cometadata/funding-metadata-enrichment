@@ -284,7 +284,7 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
         "--max-model-len", str(max_model_len),
         "--gpu-memory-utilization", str(gpu_mem),
         "--dtype", engine.get("dtype", "auto"),
-        "--disable-log-requests",
+        "--no-enable-log-requests",
     ]
     if enable_thinking:
         server_config = config_data.get("server", {})
