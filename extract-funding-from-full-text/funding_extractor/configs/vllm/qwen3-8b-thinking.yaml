@@ -19,6 +19,7 @@ server:
   url: "http://localhost:8000/v1"
   api_key: null
   timeout: 600
+  reasoning_parser: "deepseek_r1"
 
 sampling:
   temperature: 0.6

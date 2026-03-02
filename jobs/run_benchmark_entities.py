@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "extract-funding-from-full-text @ git+https://github.com/cometadata/funding-metadata-enrichment.git@20260217-adapt-to-benchmark#subdirectory=extract-funding-from-full-text",
-#     "vllm>=0.15.0",
+#     "vllm>=0.17.0",
 #     "datasets>=4.5.0",
 #     "huggingface-hub>=0.34.0,<1.0",
 # ]
@@ -284,7 +284,9 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
         "--disable-log-requests",
     ]
     if enable_thinking:
-        cmd.extend(["--reasoning-parser", "deepseek_r1"])
+        server_config = config_data.get("server", {})
+        parser = server_config.get("reasoning_parser", "deepseek_r1")
+        cmd.extend(["--reasoning-parser", parser])
     if lora_path:
         adapter_name = lora_name or "default"
         cmd.extend([

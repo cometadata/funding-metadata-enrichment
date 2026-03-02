@@ -40,6 +40,7 @@ class VLLMServerConfig:
     url: Optional[str] = None
     api_key: Optional[str] = None
     timeout: int = 120
+    reasoning_parser: Optional[str] = None
 
 
 @dataclass
