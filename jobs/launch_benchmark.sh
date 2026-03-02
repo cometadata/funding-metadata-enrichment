@@ -8,12 +8,14 @@ set -euo pipefail
 #   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b.yaml --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b-thinking.yaml --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --vllm-config llama-3.1-8b-lora.yaml --flavor a100-large
+#   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b-lora.yaml --flavor a100-large
+#   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b-lora-thinking.yaml --flavor a100-large
 #   ./launch_benchmark.sh --stages entities --vllm-config llama-3.1-8b.yaml --max-tokens 8192
 #   ./launch_benchmark.sh --stages metrics --config-name qwen3-8b-entities-thinking --flavor cpu-basic
 
 STAGES=""
-FLAVOR="l4x1"
-VLLM_CONFIG="llama-3.1-8b.yaml"
+FLAVOR="a100-large"
+VLLM_CONFIG=""
 WORKERS=""
 CONFIG_NAME=""
 MAX_TOKENS=""

@@ -312,6 +312,80 @@ class TestQwenConfigParity:
         assert config.benchmark.workers == 64
 
 
+    def test_qwen3_8b_lora_config_loads(self):
+        """Field-by-field parity for Qwen3-8B LoRA distilled adapter config."""
+        config = load_vllm_config(str(CONFIGS_DIR / "qwen3-8b-lora.yaml"))
+        # Model & mode
+        assert config.model == "Qwen/Qwen3-8B"
+        assert config.mode == "online"
+        # LoRA
+        assert config.lora.path == "cometadata/funding-parsing-lora-Qwen3_8B-ep1-r16-a32-distill-GLM_4.5_Air"
+        assert config.lora.name == "funding-parsing-lora"
+        assert config.lora.max_rank == 64
+        assert config.lora.max_loras == 1
+        # Engine (same as qwen3-8b)
+        assert config.engine.tensor_parallel_size == 1
+        assert config.engine.max_model_len == 32768
+        assert config.engine.gpu_memory_utilization == 0.95
+        assert config.engine.dtype == "auto"
+        assert config.engine.quantization is None
+        assert config.engine.enable_prefix_caching is True
+        # Server
+        assert config.server.url == "http://localhost:8000/v1"
+        assert config.server.api_key is None
+        assert config.server.timeout == 120
+        # Sampling — distilled adapter, no thinking
+        assert config.sampling.temperature == 0.7
+        assert config.sampling.top_p == 0.8
+        assert config.sampling.top_k == 20
+        assert config.sampling.max_tokens == 16384
+        assert config.sampling.enable_thinking is False
+        assert config.sampling.thinking_budget is None
+        assert config.sampling.presence_penalty == 0.0
+        assert config.sampling.extraction_passes == 1
+        assert config.sampling.batch_length == 64
+        # Benchmark
+        assert config.benchmark.config_name == "qwen3-8b-lora-entities"
+        assert config.benchmark.workers == 64
+
+    def test_qwen3_8b_lora_thinking_config_loads(self):
+        """Field-by-field parity for Qwen3-8B LoRA with thinking pipeline."""
+        config = load_vllm_config(str(CONFIGS_DIR / "qwen3-8b-lora-thinking.yaml"))
+        # Model & mode
+        assert config.model == "Qwen/Qwen3-8B"
+        assert config.mode == "online"
+        # LoRA — same distilled adapter
+        assert config.lora.path == "cometadata/funding-parsing-lora-Qwen3_8B-ep1-r16-a32-distill-GLM_4.5_Air"
+        assert config.lora.name == "funding-parsing-lora"
+        assert config.lora.max_rank == 64
+        assert config.lora.max_loras == 1
+        # Engine (same as qwen3-8b)
+        assert config.engine.tensor_parallel_size == 1
+        assert config.engine.max_model_len == 32768
+        assert config.engine.gpu_memory_utilization == 0.95
+        assert config.engine.dtype == "auto"
+        assert config.engine.quantization is None
+        assert config.engine.enable_prefix_caching is True
+        # Server — thinking timeout + reasoning parser
+        assert config.server.url == "http://localhost:8000/v1"
+        assert config.server.api_key is None
+        assert config.server.timeout == 600
+        assert config.server.reasoning_parser == "deepseek_r1"
+        # Sampling — thinking params
+        assert config.sampling.temperature == 0.6
+        assert config.sampling.top_p == 0.95
+        assert config.sampling.top_k == 20
+        assert config.sampling.max_tokens == 16384
+        assert config.sampling.enable_thinking is True
+        assert config.sampling.thinking_budget is None
+        assert config.sampling.presence_penalty == 1.5
+        assert config.sampling.extraction_passes == 1
+        assert config.sampling.batch_length == 64
+        # Benchmark
+        assert config.benchmark.config_name == "qwen3-8b-lora-entities-thinking"
+        assert config.benchmark.workers == 64
+
+
 class TestLlamaConfigs:
     """Verify Llama configs have correct model-specific parameters."""
 

@@ -294,9 +294,13 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
         cmd.append("--enforce-eager")
     if lora_path:
         adapter_name = lora_name or "default"
+        max_lora_rank = lora_config.get("max_rank", 64)
+        max_loras = lora_config.get("max_loras", 1)
         cmd.extend([
             "--enable-lora",
             "--lora-modules", f"{adapter_name}={lora_path}",
+            "--max-lora-rank", str(max_lora_rank),
+            "--max-loras", str(max_loras),
         ])
 
     logger.info("Starting vLLM server: %s", " ".join(cmd))
