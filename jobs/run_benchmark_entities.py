@@ -2,13 +2,17 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "extract-funding-from-full-text @ git+https://github.com/cometadata/funding-metadata-enrichment.git@20260217-adapt-to-benchmark#subdirectory=extract-funding-from-full-text",
-#     "vllm>=0.16.0",
+#     "vllm>=0.16.1.dev0",
 #     "datasets>=4.5.0",
 #     "huggingface-hub>=0.34.0,<1.0",
 # ]
 #
 # [tool.uv]
 # index-strategy = "unsafe-best-match"
+#
+# # Per-commit index pinned to known-good x86_64 nightly (update hash to roll forward)
+# [[tool.uv.index]]
+# url = "https://wheels.vllm.ai/9433acb8dfdafa560dbee4d67bc286ab3543db39"
 #
 # [[tool.uv.index]]
 # url = "https://wheels.vllm.ai/nightly"
