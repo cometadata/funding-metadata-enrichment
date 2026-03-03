@@ -82,28 +82,43 @@ class BaseProvider(ABC):
         return self._execute_extract(params, statement)
 
     def _execute_extract(self, extract_params: Dict[str, Any], statement: str) -> ExtractionResult:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        try:
-            future = executor.submit(lx.extract, **extract_params)
-            result = future.result(timeout=self.timeout)
-            return self._convert_extractions_to_result(result.extractions, statement)
-        except concurrent.futures.TimeoutError:
-            logger.warning(
-                "Request timed out after %s seconds for statement (%.80s...), "
-                "returning empty result (background thread may still be running)",
-                self.timeout,
-                statement,
-            )
-            return ExtractionResult(statement=statement, funders=[])
-        except ValueError as exc:
-            logger.warning(
-                "Resolver rejected model output for statement (%.80s...): %s",
-                statement,
-                exc,
-            )
-            return ExtractionResult(statement=statement, funders=[])
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(lx.extract, **extract_params)
+                result = future.result(timeout=self.timeout)
+                return self._convert_extractions_to_result(result.extractions, statement)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "Request timed out after %s seconds for statement (%.80s...), "
+                    "returning empty result (background thread may still be running)",
+                    self.timeout,
+                    statement,
+                )
+                return ExtractionResult(statement=statement, funders=[])
+            except ValueError as exc:
+                if attempt < max_attempts:
+                    logger.warning(
+                        "Resolver rejected model output for statement (%.80s...), "
+                        "retrying (attempt %d/%d): %s",
+                        statement,
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Resolver rejected model output for statement (%.80s...) "
+                        "after %d attempts: %s",
+                        statement,
+                        max_attempts,
+                        exc,
+                    )
+                    return ExtractionResult(statement=statement, funders=[])
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        return ExtractionResult(statement=statement, funders=[])
 
     @staticmethod
     def _convert_extractions_to_result(extractions: List[Any], funding_statement: str) -> ExtractionResult:

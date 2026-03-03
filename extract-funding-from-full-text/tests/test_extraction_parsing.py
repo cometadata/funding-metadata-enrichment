@@ -1,3 +1,4 @@
+import concurrent.futures
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -148,7 +149,7 @@ class _StubProvider(BaseProvider):
 
 
 def test_execute_extract_returns_empty_on_value_error():
-    """ValueError from resolver (e.g. model returns list instead of string) yields empty result."""
+    """ValueError from resolver on both attempts yields empty result."""
     with patch("funding_extractor.providers.base.lx") as mock_lx:
         mock_lx.extract.side_effect = ValueError(
             "Extraction text must be a string, integer, or float."
@@ -158,6 +159,37 @@ def test_execute_extract_returns_empty_on_value_error():
         result = provider._execute_extract(params, "stmt")
         assert result.funders == []
         assert result.statement == "stmt"
+        assert mock_lx.extract.call_count == 2
+
+
+def test_execute_extract_retries_on_value_error_then_succeeds():
+    """First call raises ValueError, second succeeds — extraction should return results."""
+    with patch("funding_extractor.providers.base.lx") as mock_lx:
+        good_result = SimpleNamespace(
+            extractions=[_ext("funder_name", "NSF")]
+        )
+        mock_lx.extract.side_effect = [
+            ValueError("Extraction text must be a string, integer, or float."),
+            good_result,
+        ]
+        provider = _StubProvider(model_id=None, model_url=None, api_key=None, timeout=30)
+        params = {"text_or_documents": "stmt", "model": MagicMock()}
+        result = provider._execute_extract(params, "stmt")
+        assert len(result.funders) == 1
+        assert result.funders[0].funder_name == "NSF"
+        assert mock_lx.extract.call_count == 2
+
+
+def test_execute_extract_no_retry_on_timeout():
+    """TimeoutError returns immediately without retry."""
+    with patch("funding_extractor.providers.base.lx") as mock_lx:
+        mock_lx.extract.side_effect = concurrent.futures.TimeoutError()
+        provider = _StubProvider(model_id=None, model_url=None, api_key=None, timeout=0.01)
+        params = {"text_or_documents": "stmt", "model": MagicMock()}
+        result = provider._execute_extract(params, "stmt")
+        assert result.funders == []
+        assert result.statement == "stmt"
+        assert mock_lx.extract.call_count == 1
 
 
 def test_execute_extract_returns_empty_on_timeout():

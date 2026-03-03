@@ -414,6 +414,30 @@ def run_stage2(
             doc_funders: dict[int, list[dict[str, Any]]] = defaultdict(list)
             doc_reasoning: dict[int, list[str]] = defaultdict(list)
 
+            # Warmup: process a few items sequentially so the vLLM server
+            # can warm KV caches and CUDA graphs before full concurrency
+            warmup_count = min(4, len(work_items))
+            if warmup_count > 0:
+                logger.info(
+                    "Stage 2 [%s]: warming up with %d items before parallel execution",
+                    split,
+                    warmup_count,
+                )
+                for doc_idx, stmt_text in work_items[:warmup_count]:
+                    try:
+                        extraction, reasoning = service.extract_entities_with_reasoning(stmt_text)
+                        doc_funders[doc_idx].extend(_funders_from_extraction(extraction))
+                        doc_reasoning[doc_idx].extend(reasoning)
+                    except Exception:
+                        logger.exception(
+                            "Stage 2 warmup failed for doi=%s statement=%.80s",
+                            split_results[doc_idx]["doi"],
+                            stmt_text,
+                        )
+                    processed += 1
+                work_items = work_items[warmup_count:]
+                logger.info("Stage 2 [%s]: warmup complete, starting parallel execution", split)
+
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=workers
             ) as executor:
