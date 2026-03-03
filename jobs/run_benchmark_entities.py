@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "extract-funding-from-full-text @ git+https://github.com/cometadata/funding-metadata-enrichment.git@20260217-adapt-to-benchmark#subdirectory=extract-funding-from-full-text",
-#     "vllm>=0.16.1.dev0",
+#     "vllm>=0.16.0",
 #     "datasets>=4.5.0",
 #     "huggingface-hub>=0.34.0,<1.0",
 # ]
