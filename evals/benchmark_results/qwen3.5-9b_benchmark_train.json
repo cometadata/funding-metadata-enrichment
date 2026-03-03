@@ -6,7 +6,7 @@
     "funder_threshold": 0.8,
     "id_match_mode": "normalized",
     "mode": "precomputed",
-    "timestamp": "2026-03-02T19:30:17.442460"
+    "timestamp": "2026-03-02T23:46:48.590491"
   },
   "summary": {
     "total_gold_documents": 1316,
@@ -29,47 +29,47 @@
     },
     "funder": {
       "gold_count": 3395,
-      "pred_count": 2336,
-      "gold_matched": 2022,
-      "pred_matched": 2022,
-      "precision": 0.8656,
-      "recall": 0.5956,
-      "f1": 0.7056,
-      "f0_5": 0.7936,
-      "f1_5": 0.6588
+      "pred_count": 3280,
+      "gold_matched": 2801,
+      "pred_matched": 2801,
+      "precision": 0.854,
+      "recall": 0.825,
+      "f1": 0.8393,
+      "f0_5": 0.848,
+      "f1_5": 0.8337
     },
     "award_id": {
       "gold_count": 3452,
-      "pred_count": 2236,
-      "gold_matched": 1714,
-      "pred_matched": 1714,
-      "precision": 0.7665,
-      "recall": 0.4965,
-      "f1": 0.6027,
-      "f0_5": 0.6914,
-      "f1_5": 0.5569
+      "pred_count": 3277,
+      "gold_matched": 2397,
+      "pred_matched": 2397,
+      "precision": 0.7315,
+      "recall": 0.6944,
+      "f1": 0.7124,
+      "f0_5": 0.7237,
+      "f1_5": 0.7054
     },
     "funding_scheme": {
       "gold_count": 1345,
-      "pred_count": 391,
-      "gold_matched": 231,
-      "pred_matched": 231,
-      "precision": 0.5908,
-      "recall": 0.1717,
-      "f1": 0.2661,
-      "f0_5": 0.397,
-      "f1_5": 0.2197
+      "pred_count": 623,
+      "gold_matched": 344,
+      "pred_matched": 344,
+      "precision": 0.5522,
+      "recall": 0.2558,
+      "f1": 0.3496,
+      "f0_5": 0.4483,
+      "f1_5": 0.3064
     },
     "award_title": {
       "gold_count": 181,
-      "pred_count": 79,
-      "gold_matched": 32,
-      "pred_matched": 32,
-      "precision": 0.4051,
-      "recall": 0.1768,
-      "f1": 0.2462,
-      "f0_5": 0.3219,
-      "f1_5": 0.2139
+      "pred_count": 132,
+      "gold_matched": 38,
+      "pred_matched": 38,
+      "precision": 0.2879,
+      "recall": 0.2099,
+      "f1": 0.2428,
+      "f0_5": 0.268,
+      "f1_5": 0.229
     }
   }
 }
