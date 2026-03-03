@@ -122,8 +122,9 @@ class TestVLLMLanguageModelInfer:
             list(model.infer(["prompt"]))
 
             mocks["vllm"].SamplingParams.assert_called_once_with(
-                temperature=0.5, top_p=0.9, top_k=50, max_tokens=1024,
-                presence_penalty=0.0,
+                temperature=0.5, top_p=0.9, top_k=50, min_p=0.0,
+                max_tokens=1024, presence_penalty=0.0,
+                repetition_penalty=1.0,
             )
 
     def test_infer_with_lora_request(self):

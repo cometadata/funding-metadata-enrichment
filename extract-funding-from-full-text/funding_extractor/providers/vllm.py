@@ -28,9 +28,11 @@ class VLLMLanguageModel(BaseLanguageModel):
         self._temperature = config.sampling.temperature
         self._top_p = config.sampling.top_p
         self._top_k = config.sampling.top_k
+        self._min_p = config.sampling.min_p
         self._max_tokens = config.sampling.max_tokens
         self._enable_thinking = config.sampling.enable_thinking
         self._presence_penalty = config.sampling.presence_penalty
+        self._repetition_penalty = config.sampling.repetition_penalty
         self._lora_request = self._build_lora_request(config)
         self._reasoning_traces: list[str] = []
         self._reasoning_lock = threading.Lock()
@@ -113,8 +115,10 @@ class VLLMLanguageModel(BaseLanguageModel):
             temperature=merged.get("temperature", self._temperature),
             top_p=merged.get("top_p", self._top_p),
             top_k=merged.get("top_k", self._top_k),
+            min_p=merged.get("min_p", self._min_p),
             max_tokens=merged.get("max_output_tokens", self._max_tokens),
             presence_penalty=merged.get("presence_penalty", self._presence_penalty),
+            repetition_penalty=merged.get("repetition_penalty", self._repetition_penalty),
         )
 
         engine = self._get_or_create_engine(self._config)
@@ -215,8 +219,10 @@ class VLLMProvider(BaseProvider):
             temperature=self._vllm_config.sampling.temperature,
             top_p=self._vllm_config.sampling.top_p,
             top_k=self._vllm_config.sampling.top_k,
+            min_p=self._vllm_config.sampling.min_p,
             max_output_tokens=self._vllm_config.sampling.max_tokens,
             presence_penalty=self._vllm_config.sampling.presence_penalty,
+            repetition_penalty=self._vllm_config.sampling.repetition_penalty,
             max_workers=1,
         )
 
