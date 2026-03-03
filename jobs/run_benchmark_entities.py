@@ -7,6 +7,9 @@
 #     "huggingface-hub>=0.34.0,<1.0",
 # ]
 #
+# [tool.uv]
+# index-strategy = "unsafe-best-match"
+#
 # [[tool.uv.index]]
 # url = "https://wheels.vllm.ai/nightly"
 # ///
