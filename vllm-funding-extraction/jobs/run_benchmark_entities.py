@@ -12,7 +12,7 @@
 # index-strategy = "unsafe-best-match"
 #
 # [[tool.uv.index]]
-# url = "https://wheels.vllm.ai/nightly"
+# url = "https://wheels.vllm.ai/9433acb8dfdafa560dbee4d67bc286ab3543db39"
 # ///
 """Run vLLM entity extraction on benchmark funding statements.
 
