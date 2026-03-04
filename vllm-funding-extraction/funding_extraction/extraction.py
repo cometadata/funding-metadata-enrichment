@@ -2,6 +2,8 @@ import concurrent.futures
 import json
 import logging
 import re
+import threading
+import time
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -140,20 +142,43 @@ class ExtractionService:
         if not statements:
             return results
 
+        total = len(statements)
+        completed = 0
+        lock = threading.Lock()
+        t0 = time.monotonic()
+
+        def _track(doc_id: str, result: tuple[ExtractionResult, list[str]]) -> None:
+            nonlocal completed
+            with lock:
+                completed += 1
+                n = completed
+            if n % 50 == 0 or n == total:
+                elapsed = time.monotonic() - t0
+                rate = n / elapsed if elapsed > 0 else 0
+                logger.info(
+                    "Progress: %d/%d statements (%.1f/s, %.0fs elapsed)",
+                    n, total, rate, elapsed,
+                )
+
         warmup_count = min(warmup_count, len(statements))
         warmup_items = statements[:warmup_count]
         parallel_items = statements[warmup_count:]
 
         # Warmup phase: sequential
+        logger.info("Warmup: processing %d statements sequentially", warmup_count)
         for doc_id, text in warmup_items:
             try:
-                results[doc_id] = self.extract(text)
+                result = self.extract(text)
+                results[doc_id] = result
+                _track(doc_id, result)
             except Exception:
                 logger.exception("Warmup extraction failed for doc_id=%s", doc_id)
                 results[doc_id] = (ExtractionResult(statement=text, funders=[]), [])
+                _track(doc_id, results[doc_id])
 
         # Parallel phase
         if parallel_items:
+            logger.info("Parallel: processing %d statements with %d workers", len(parallel_items), workers)
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_id = {
                     executor.submit(self.extract, text): doc_id
@@ -162,10 +187,18 @@ class ExtractionService:
                 for future in concurrent.futures.as_completed(future_to_id):
                     doc_id = future_to_id[future]
                     try:
-                        results[doc_id] = future.result()
+                        result = future.result()
+                        results[doc_id] = result
+                        _track(doc_id, result)
                     except Exception:
                         logger.exception("Extraction failed for doc_id=%s", doc_id)
                         text = next(t for d, t in parallel_items if d == doc_id)
                         results[doc_id] = (ExtractionResult(statement=text, funders=[]), [])
+                        _track(doc_id, results[doc_id])
 
+        elapsed = time.monotonic() - t0
+        logger.info(
+            "Extraction complete: %d/%d statements in %.1fs (%.1f/s)",
+            completed, total, elapsed, completed / elapsed if elapsed > 0 else 0,
+        )
         return results
