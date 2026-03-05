@@ -17,8 +17,10 @@ dependencies = [
 [project.optional-dependencies]
 benchmark = [
     "datasets>=4.5.0",
+    "ftfy>=6.0",
     "huggingface-hub>=0.34.0,<1.0",
     "pyarrow>=23.0.0",
+    "rapidfuzz>=3.0",
     "torch>=2.0.0",
 ]
 test = ["pytest>=9.0.0"]
