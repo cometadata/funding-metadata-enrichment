@@ -286,6 +286,8 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
     if not enable_thinking:
         default_kwargs = json.dumps({"enable_thinking": False})
         cmd.extend(["--default-chat-template-kwargs", default_kwargs])
+    if engine.get("enable_prefix_caching", False):
+        cmd.append("--enable-prefix-caching")
     if engine.get("enforce_eager", False):
         cmd.append("--enforce-eager")
     if lora_path:
