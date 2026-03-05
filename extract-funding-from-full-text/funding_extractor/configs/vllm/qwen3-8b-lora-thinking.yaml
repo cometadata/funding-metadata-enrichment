@@ -18,7 +18,7 @@ engine:
 server:
   url: "http://localhost:8000/v1"
   api_key: null
-  timeout: 600
+  timeout: 300
   reasoning_parser: "deepseek_r1"
 
 sampling:
