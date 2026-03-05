@@ -27,7 +27,7 @@ sampling:
   top_k: 20
   max_tokens: 16384
   enable_thinking: true
-  thinking_budget: null
+  thinking_budget: 4096
   presence_penalty: 1.5
   extraction_passes: 1
   batch_length: 64

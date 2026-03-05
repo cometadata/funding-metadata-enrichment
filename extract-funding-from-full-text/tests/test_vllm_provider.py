@@ -700,8 +700,8 @@ class TestVLLMThinkingOnline:
 
                 assert lm._reasoning_traces == ["I need to extract funders"]
 
-    def test_online_does_not_inject_thinking_budget(self, tmp_path):
-        """Patched client should NOT inject thinking_token_budget (unsupported by vLLM)."""
+    def test_online_injects_thinking_budget_in_template_kwargs(self, tmp_path):
+        """Patched client should inject thinking_budget in chat_template_kwargs."""
         mocks = _make_mock_vllm()
         with patch.dict(sys.modules, mocks):
             from funding_extractor.providers.vllm import VLLMProvider
@@ -742,9 +742,9 @@ class TestVLLMThinkingOnline:
                 )
 
                 call_kwargs = original_create.call_args[1]
-                assert "thinking_token_budget" not in call_kwargs["extra_body"]
                 assert call_kwargs["extra_body"]["chat_template_kwargs"] == {
-                    "enable_thinking": True
+                    "enable_thinking": True,
+                    "thinking_budget": 4096,
                 }
 
     def test_online_no_thinking_budget_when_none(self, tmp_path):

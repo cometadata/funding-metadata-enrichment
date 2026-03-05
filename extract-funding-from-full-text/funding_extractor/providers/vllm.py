@@ -147,7 +147,10 @@ def _patch_client_for_thinking(
     @wraps(original_create)
     def patched_create(**kwargs):
         extra_body = kwargs.pop("extra_body", {}) or {}
-        extra_body["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+        template_kwargs = {"enable_thinking": enable_thinking}
+        if thinking_budget is not None:
+            template_kwargs["thinking_budget"] = thinking_budget
+        extra_body["chat_template_kwargs"] = template_kwargs
         kwargs["extra_body"] = extra_body
         response = original_create(**kwargs)
         if enable_thinking and response.choices:

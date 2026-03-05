@@ -296,14 +296,14 @@ class TestQwenConfigParity:
         assert config.engine.enable_prefix_caching is True
         # Server
         assert config.server.url == "http://localhost:8000/v1"
-        assert config.server.timeout == 600  # thinking timeout
+        assert config.server.timeout == 300  # thinking timeout
         # Sampling — MUST match thinking branch of write_vllm_config()
         assert config.sampling.temperature == 0.6
         assert config.sampling.top_p == 0.95
         assert config.sampling.top_k == 20
         assert config.sampling.max_tokens == 16384
         assert config.sampling.enable_thinking is True
-        assert config.sampling.thinking_budget is None  # set via CLI override
+        assert config.sampling.thinking_budget == 4096
         assert config.sampling.presence_penalty == 1.5
         assert config.sampling.extraction_passes == 1
         assert config.sampling.batch_length == 64
@@ -369,7 +369,7 @@ class TestQwenConfigParity:
         # Server — thinking timeout + reasoning parser
         assert config.server.url == "http://localhost:8000/v1"
         assert config.server.api_key is None
-        assert config.server.timeout == 600
+        assert config.server.timeout == 300
         assert config.server.reasoning_parser == "deepseek_r1"
         # Sampling — thinking params
         assert config.sampling.temperature == 0.6
@@ -377,7 +377,7 @@ class TestQwenConfigParity:
         assert config.sampling.top_k == 20
         assert config.sampling.max_tokens == 16384
         assert config.sampling.enable_thinking is True
-        assert config.sampling.thinking_budget is None
+        assert config.sampling.thinking_budget == 4096
         assert config.sampling.presence_penalty == 1.5
         assert config.sampling.extraction_passes == 1
         assert config.sampling.batch_length == 64

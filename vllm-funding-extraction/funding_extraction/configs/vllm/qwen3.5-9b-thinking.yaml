@@ -29,7 +29,7 @@ sampling:
   min_p: 0.0
   max_tokens: 16384
   enable_thinking: true
-  thinking_budget: null
+  thinking_budget: 4096
   presence_penalty: 0.0
   repetition_penalty: 1.0
   extraction_passes: 1
