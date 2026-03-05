@@ -90,8 +90,8 @@ class ExtractionService:
                     continue
 
                 content = response.content
-                content, think_traces = strip_thinking(content)
-                if think_traces:
+                if self._config.sampling.enable_thinking:
+                    content, think_traces = strip_thinking(content)
                     reasoning.extend(think_traces)
 
                 if response.reasoning:
