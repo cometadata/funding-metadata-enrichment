@@ -283,7 +283,7 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
     reasoning_parser = server_config.get("reasoning_parser")
     if reasoning_parser:
         cmd.extend(["--reasoning-parser", reasoning_parser])
-    if not enable_thinking and reasoning_parser:
+    if not enable_thinking:
         default_kwargs = json.dumps({"enable_thinking": False})
         cmd.extend(["--default-chat-template-kwargs", default_kwargs])
     if engine.get("enforce_eager", False):
