@@ -1,4 +1,5 @@
 mod dictionary;
+mod failure;
 mod recovery;
 mod types;
 mod validation;
