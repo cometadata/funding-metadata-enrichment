@@ -1,0 +1,21 @@
+[package]
+name = "heal-markdown"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+plsfix = "0.1"
+regex = "1"
+pulldown-cmark = "0.13"
+pulldown-cmark-to-cmark = "22"
+arrow = { version = "58", features = ["prettyprint"] }
+parquet = { version = "58", features = ["arrow"] }
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+once_cell = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
