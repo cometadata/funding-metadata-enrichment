@@ -18,6 +18,7 @@ pub struct WordRecoveryResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum FailureCategory {
     Success,
     PartialSuccess,

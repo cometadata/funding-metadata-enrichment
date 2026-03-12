@@ -5,28 +5,22 @@ use regex::Regex;
 
 use crate::validation::should_preserve_blank_line;
 
-static FOOTER_PATTERN_1: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^\s*\d+\s*$").unwrap());
+static FOOTER_PATTERN_1: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^\s*\d+\s*$").unwrap());
 static FOOTER_PATTERN_2: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*(?:Page|Pg\.?)\s*\d+(?:\s*of\s*\d+)?\s*$").unwrap());
-static FOOTER_PATTERN_3: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^.*?\|\s*\d+\s*$").unwrap());
+static FOOTER_PATTERN_3: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^.*?\|\s*\d+\s*$").unwrap());
 static BULLET_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^(\s*)([•●◦▪▫·]+)(\s*)").unwrap());
 static HYPHENATION_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"([A-Za-z]{2,})-\s*[\r\n]+\s*([a-z][\w-]*)").unwrap());
-static CID_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\(cid:\d+\)").unwrap());
-static CITATION_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[\d+\]").unwrap());
+static CID_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\(cid:\d+\)").unwrap());
+static CITATION_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\d+\]").unwrap());
 static BASE64_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^[A-Za-z0-9+/=]{40,}\s*$").unwrap());
-static LEADING_ALPHA_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[A-Za-z]{4}").unwrap());
+static LEADING_ALPHA_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z]{4}").unwrap());
 static LIST_MARKER_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(\d+\.|[A-Za-z]\.)\s").unwrap());
-static UNORDERED_MARKER_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[-*+]\s").unwrap());
+static UNORDERED_MARKER_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[-*+]\s").unwrap());
 
 /// Scan lines, skip blanks, find first line with at least 4 consecutive alpha
 /// chars or that starts with `#`. If material was trimmed, return the trimmed
@@ -79,11 +73,7 @@ pub fn remove_citations_and_noise(text: &str, strip_citations: bool) -> String {
 /// Identify runs of consecutive lines where each line is empty or <= max_len
 /// chars. If a run has >= min_run lines, drop it entirely. Return cleaned text
 /// and descriptions of removed spans.
-pub fn drop_short_line_runs(
-    text: &str,
-    max_len: usize,
-    min_run: usize,
-) -> (String, Vec<String>) {
+pub fn drop_short_line_runs(text: &str, max_len: usize, min_run: usize) -> (String, Vec<String>) {
     let lines: Vec<&str> = text.lines().collect();
     let mut runs: Vec<(usize, usize)> = Vec::new();
     let mut run_start: Option<usize> = None;
@@ -94,14 +84,12 @@ pub fn drop_short_line_runs(
             if run_start.is_none() {
                 run_start = Some(i);
             }
-        } else {
-            if let Some(start) = run_start {
-                let run_len = i - start;
-                if run_len >= min_run {
-                    runs.push((start, i));
-                }
-                run_start = None;
+        } else if let Some(start) = run_start {
+            let run_len = i - start;
+            if run_len >= min_run {
+                runs.push((start, i));
             }
+            run_start = None;
         }
     }
     // Handle a run that extends to the end of the text
@@ -115,8 +103,8 @@ pub fn drop_short_line_runs(
     let mut drop_set = vec![false; lines.len()];
     let mut descriptions = Vec::new();
     for &(start, end) in &runs {
-        for i in start..end {
-            drop_set[i] = true;
+        for item in drop_set.iter_mut().take(end).skip(start) {
+            *item = true;
         }
         descriptions.push(format!(
             "Removed short-line run: lines {}-{} ({} lines)",
@@ -183,11 +171,7 @@ pub fn remove_blank_between_short_lines(text: &str, max_len: usize) -> String {
 /// Collect consecutive non-blank lines that are <= max_len chars (skip blank
 /// lines between them). If the accumulated token count >= min_tokens, join
 /// them with a single space. Return the result and whether any merging occurred.
-pub fn merge_short_fragments(
-    text: &str,
-    max_len: usize,
-    min_tokens: usize,
-) -> (String, bool) {
+pub fn merge_short_fragments(text: &str, max_len: usize, min_tokens: usize) -> (String, bool) {
     let lines: Vec<&str> = text.lines().collect();
     let mut result_lines: Vec<String> = Vec::new();
     let mut fragment_buf: Vec<&str> = Vec::new();
@@ -226,9 +210,7 @@ pub fn merge_short_fragments(
 
 /// Replace Unicode bullet characters at line starts with `- `.
 pub fn normalize_bullets(text: &str) -> String {
-    BULLET_PATTERN
-        .replace_all(text, "${1}- ")
-        .into_owned()
+    BULLET_PATTERN.replace_all(text, "${1}- ").into_owned()
 }
 
 /// Rejoin words that were hyphenated across a line break.

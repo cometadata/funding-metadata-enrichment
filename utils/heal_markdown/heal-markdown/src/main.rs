@@ -239,9 +239,7 @@ fn main() {
         strip_citations: cli.strip_citations,
     };
 
-    let all_results: Vec<RestorationResult>;
-
-    if is_parquet_input(&cli.path) {
+    let all_results: Vec<RestorationResult> = if is_parquet_input(&cli.path) {
         // === Parquet branch ===
         let output_format = cli
             .output_format
@@ -280,7 +278,7 @@ fn main() {
                 .map(|(f, c)| {
                     let result = process_document(f, c, &options, cli.exclude_failed);
                     let count = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 1000 == 0 {
+                    if count.is_multiple_of(1000) {
                         eprintln!("Processed {} documents...", count);
                     }
                     result
@@ -354,7 +352,7 @@ fn main() {
             collected_results.extend(results);
         }
 
-        all_results = collected_results;
+        collected_results
     } else {
         // === Markdown branch ===
         let md_paths = gather_markdown_paths(&cli.path);
@@ -374,12 +372,13 @@ fn main() {
 
         let progress = AtomicUsize::new(0);
 
-        all_results = md_paths
+        md_paths
             .par_iter()
             .map(|path| {
                 let content = read_file_lossy(path);
                 let filename = path.to_string_lossy().to_string();
-                let mut result = process_document(&filename, &content, &options, cli.exclude_failed);
+                let mut result =
+                    process_document(&filename, &content, &options, cli.exclude_failed);
 
                 // Determine failure category string for write_output
                 let failure_cat = if !result.success {
@@ -405,7 +404,7 @@ fn main() {
                 result.destination = destination;
 
                 let count = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % 1000 == 0 {
+                if count.is_multiple_of(1000) {
                     eprintln!("Processed {} files...", count);
                 }
 
@@ -420,8 +419,8 @@ fn main() {
 
                 result
             })
-            .collect();
-    }
+            .collect()
+    };
 
     print_summary(&all_results);
 }

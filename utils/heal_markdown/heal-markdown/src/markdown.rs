@@ -24,7 +24,7 @@ pub fn validate_markdown(text: &str) -> Vec<String> {
 
     // Check for unbalanced code fences
     let fence_count = text.matches("```").count();
-    if fence_count % 2 != 0 {
+    if !fence_count.is_multiple_of(2) {
         warnings.push("Detected unbalanced code fences".to_string());
     }
 

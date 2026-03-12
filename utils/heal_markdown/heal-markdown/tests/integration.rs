@@ -95,11 +95,7 @@ fn test_process_directory() {
     let output_dir = dir.path().join("output");
 
     let status = Command::new(env!("CARGO_BIN_EXE_heal-markdown"))
-        .args(&[
-            "tests/fixtures/",
-            "--out-dir",
-            output_dir.to_str().unwrap(),
-        ])
+        .args(&["tests/fixtures/", "--out-dir", output_dir.to_str().unwrap()])
         .status()
         .unwrap();
 

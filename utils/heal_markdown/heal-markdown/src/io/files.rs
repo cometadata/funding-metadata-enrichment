@@ -17,20 +17,12 @@ pub fn gather_markdown_paths(path: &Path) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "md")
-                .unwrap_or(false)
-        })
+        .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
         .filter(|e| {
             // Exclude entries where any component (relative to the walk root) starts with '.'
             let rel = e.path().strip_prefix(path).unwrap_or(e.path());
-            !rel.components().any(|c| {
-                c.as_os_str()
-                    .to_string_lossy()
-                    .starts_with('.')
-            })
+            !rel.components()
+                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
         })
         .map(|e| e.into_path())
         .collect();
@@ -48,6 +40,7 @@ pub fn gather_markdown_paths(path: &Path) -> Vec<PathBuf> {
 ///   - `in_place`: overwrite the source file
 ///   - `out_dir` with optional `failure_category`: write to structured output directory
 ///   - Otherwise: write to `{source_stem}-clean.md` in the same directory as source
+#[allow(clippy::too_many_arguments)]
 pub fn write_output(
     source: &Path,
     base_path: &Path,
@@ -79,10 +72,7 @@ pub fn write_output(
     } else {
         // Write to {source_stem}-clean.md in the same directory as source
         let parent = source.parent().unwrap_or_else(|| Path::new("."));
-        let stem = source
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let stem = source.file_stem().unwrap_or_default().to_string_lossy();
         parent.join(format!("{}-clean.md", stem))
     };
 
@@ -239,16 +229,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("test.md");
         fs::write(&file, "original").unwrap();
-        let result = write_output(
-            &file,
-            dir.path(),
-            "",
-            "original",
-            false,
-            None,
-            true,
-            None,
-        );
+        let result = write_output(&file, dir.path(), "", "original", false, None, true, None);
         assert_eq!(result, None);
     }
 
@@ -257,16 +238,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("test.md");
         fs::write(&file, "original").unwrap();
-        let result = write_output(
-            &file,
-            dir.path(),
-            "",
-            "original",
-            false,
-            None,
-            false,
-            None,
-        );
+        let result = write_output(&file, dir.path(), "", "original", false, None, false, None);
         let expected = dir.path().join("test-clean.md");
         assert_eq!(result, Some(expected.clone()));
         assert_eq!(fs::read_to_string(&expected).unwrap(), "original");

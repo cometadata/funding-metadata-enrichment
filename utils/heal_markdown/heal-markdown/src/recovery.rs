@@ -137,9 +137,7 @@ pub fn split_concatenated_text(
     }
 
     // Determine confidence level
-    let confidence = if changes_made == 0 {
-        RecoveryConfidence::None_
-    } else if processable_lines == 0 {
+    let confidence = if changes_made == 0 || processable_lines == 0 {
         RecoveryConfidence::None_
     } else {
         let ratio = changes_made as f64 / processable_lines as f64;

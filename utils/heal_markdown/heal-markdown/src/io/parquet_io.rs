@@ -62,7 +62,7 @@ pub fn read_parquet_input(
             let content = content_array.value(i).to_string();
             contents.push(content);
 
-            let filename = if let Some(ref fnames) = filename_array {
+            let filename = if let Some(fnames) = &filename_array {
                 fnames.value(i).to_string()
             } else {
                 let name = format!("row_{}.md", row_counter);
@@ -99,10 +99,7 @@ pub fn write_parquet_output(
         .map(|r| r.cleaned_content.clone().unwrap_or_default())
         .collect();
     let contents_ref: Vec<&str> = contents.iter().map(|s| s.as_str()).collect();
-    let warnings: Vec<String> = results
-        .iter()
-        .map(|r| r.warnings.join("; "))
-        .collect();
+    let warnings: Vec<String> = results.iter().map(|r| r.warnings.join("; ")).collect();
     let warnings_ref: Vec<&str> = warnings.iter().map(|s| s.as_str()).collect();
     let successes: Vec<bool> = results.iter().map(|r| r.success).collect();
     let original_sizes: Vec<i64> = results.iter().map(|r| r.original_size as i64).collect();
@@ -178,12 +175,14 @@ pub fn write_failed_parquet(
 
     let failure_categories: Vec<Option<String>> = results
         .iter()
-        .map(|r| r.failure_analysis.as_ref().map(|fa| fa.category.to_string()))
+        .map(|r| {
+            r.failure_analysis
+                .as_ref()
+                .map(|fa| fa.category.to_string())
+        })
         .collect();
-    let failure_categories_ref: Vec<Option<&str>> = failure_categories
-        .iter()
-        .map(|s| s.as_deref())
-        .collect();
+    let failure_categories_ref: Vec<Option<&str>> =
+        failure_categories.iter().map(|s| s.as_deref()).collect();
 
     let issues: Vec<Option<String>> = results
         .iter()
@@ -297,7 +296,8 @@ pub fn gather_parquet_paths(path: &Path) -> Vec<PathBuf> {
         })
         .filter(|e| {
             let rel = e.path().strip_prefix(path).unwrap_or(e.path());
-            !rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+            !rel.components()
+                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
         })
         .map(|e| e.into_path())
         .collect();
@@ -326,7 +326,10 @@ mod tests {
             schema.clone(),
             vec![
                 Arc::new(StringArray::from(vec!["doc1.md", "doc2.md"])),
-                Arc::new(StringArray::from(vec!["# Doc 1\nContent", "# Doc 2\nContent"])),
+                Arc::new(StringArray::from(vec![
+                    "# Doc 1\nContent",
+                    "# Doc 2\nContent",
+                ])),
             ],
         )
         .unwrap();
@@ -395,8 +398,7 @@ mod tests {
     #[test]
     fn test_read_parquet_no_filename_column() {
         let dir = TempDir::new().unwrap();
-        let path =
-            create_test_parquet_with_columns(dir.path(), "test.parquet", None, "markdown");
+        let path = create_test_parquet_with_columns(dir.path(), "test.parquet", None, "markdown");
         let (filenames, contents) = read_parquet_input(&path).unwrap();
         assert_eq!(filenames.len(), 2);
         assert_eq!(filenames[0], "row_0.md");
@@ -541,10 +543,7 @@ mod tests {
             let batch = &batches[0];
             let fnames = batch.column(0).as_string::<i32>();
             let conts = batch.column(1).as_string::<i32>();
-            (
-                fnames.value(0).to_string(),
-                conts.value(0).to_string(),
-            )
+            (fnames.value(0).to_string(), conts.value(0).to_string())
         };
         assert_eq!(filenames, "doc1.md");
         assert_eq!(contents, "cleaned");
@@ -614,19 +613,13 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
 
         // Verify some values
-        let category = batch
-            .column(3)
-            .as_string::<i32>();
+        let category = batch.column(3).as_string::<i32>();
         assert_eq!(category.value(0), "malformed");
 
-        let issues = batch
-            .column(4)
-            .as_string::<i32>();
+        let issues = batch.column(4).as_string::<i32>();
         assert_eq!(issues.value(0), "broken headers; missing content");
 
-        let confidence = batch
-            .column(6)
-            .as_string::<i32>();
+        let confidence = batch.column(6).as_string::<i32>();
         assert_eq!(confidence.value(0), "low");
     }
 

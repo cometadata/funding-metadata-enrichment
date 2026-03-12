@@ -90,10 +90,7 @@ pub fn validate_input_quality(text: &str) -> (bool, String) {
         let whitespace_count = text.chars().filter(|c| c.is_whitespace()).count();
         let ws_ratio = whitespace_count as f64 / total_chars as f64;
         if ws_ratio < MIN_WHITESPACE_RATIO {
-            return (
-                false,
-                format!("Low whitespace ratio: {:.3}", ws_ratio),
-            );
+            return (false, format!("Low whitespace ratio: {:.3}", ws_ratio));
         }
     }
 
@@ -312,7 +309,11 @@ mod tests {
             "summary",
         ];
         for h in &headers {
-            assert!(is_section_header(h), "Expected '{}' to be a section header", h);
+            assert!(
+                is_section_header(h),
+                "Expected '{}' to be a section header",
+                h
+            );
         }
     }
 
