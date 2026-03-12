@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+
 use once_cell::sync::Lazy;
 use regex::Regex;
+
+use crate::validation::should_preserve_blank_line;
 
 static FOOTER_PATTERN_1: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*\d+\s*$").unwrap());
@@ -19,6 +23,10 @@ static BASE64_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^[A-Za-z0-9+/=]{40,}\s*$").unwrap());
 static LEADING_ALPHA_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[A-Za-z]{4}").unwrap());
+static LIST_MARKER_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(\d+\.|[A-Za-z]\.)\s").unwrap());
+static UNORDERED_MARKER_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[-*+]\s").unwrap());
 
 /// Scan lines, skip blanks, find first line with at least 4 consecutive alpha
 /// chars or that starts with `#`. If material was trimmed, return the trimmed
@@ -241,6 +249,180 @@ pub fn collapse_blank_lines(text: &str) -> String {
     result_lines.join("\n")
 }
 
+/// Remove lines that repeat across pages (e.g. headers/footers).
+///
+/// Lines with length >= 4 and word count <= `max_words` are counted. If a line
+/// appears at least `estimated_pages * threshold` times, it is stripped.
+/// Returns the cleaned text and a sorted list of removed line texts.
+pub fn strip_repeated_lines(
+    text: &str,
+    page_length_estimate: usize,
+    threshold: f64,
+    max_words: usize,
+) -> (String, Vec<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    // Count frequency of non-empty, normalized lines
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for line in &lines {
+        let normalized = line.trim();
+        if normalized.is_empty() || normalized.len() < 4 {
+            continue;
+        }
+        let word_count = normalized.split_whitespace().count();
+        if word_count > max_words {
+            continue;
+        }
+        *counts.entry(normalized.to_string()).or_insert(0) += 1;
+    }
+
+    let estimated_pages = std::cmp::max(1, total_lines / page_length_estimate);
+    let min_count = std::cmp::max(2, (estimated_pages as f64 * threshold) as usize);
+
+    // Determine which normalized texts should be removed
+    let remove_set: std::collections::HashSet<&str> = counts
+        .iter()
+        .filter(|(_, &count)| count >= min_count)
+        .map(|(text, _)| text.as_str())
+        .collect();
+
+    let mut removed: Vec<String> = remove_set.iter().map(|s| s.to_string()).collect();
+    removed.sort();
+
+    let kept: Vec<&str> = lines
+        .iter()
+        .filter(|line| {
+            let normalized = line.trim();
+            !remove_set.contains(normalized)
+        })
+        .copied()
+        .collect();
+
+    (kept.join("\n"), removed)
+}
+
+/// Merge lines that were broken by PDF extraction into coherent paragraphs.
+///
+/// Uses a state machine to handle code blocks (pass through), blank lines
+/// (control paragraph breaks), list items, headings, and blockquotes
+/// (preserve structure), and ordinary text (merge broken lines).
+pub fn merge_broken_lines(text: &str) -> String {
+    let mut output: Vec<String> = Vec::new();
+    let mut buffer = String::new();
+    let mut in_code = false;
+    let mut blank_count: usize = 0;
+
+    let starts_new_block = |line: &str| -> bool {
+        LIST_MARKER_PATTERN.is_match(line)
+            || UNORDERED_MARKER_PATTERN.is_match(line)
+            || line.starts_with('>')
+            || line.starts_with('#')
+    };
+
+    let flush_buffer = |buffer: &mut String, output: &mut Vec<String>| {
+        if !buffer.is_empty() {
+            output.push(buffer.clone());
+            buffer.clear();
+        }
+    };
+
+    for line in text.lines() {
+        // Code fence toggle
+        if line.trim_start().starts_with("```") {
+            // Flush any pending buffer before entering/leaving code
+            if !in_code {
+                if !buffer.is_empty() {
+                    if blank_count > 0 {
+                        output.push(String::new());
+                    }
+                    flush_buffer(&mut buffer, &mut output);
+                }
+                blank_count = 0;
+            }
+            in_code = !in_code;
+            output.push(line.trim_end().to_string());
+            continue;
+        }
+
+        // Inside code blocks: pass through
+        if in_code {
+            output.push(line.trim_end().to_string());
+            continue;
+        }
+
+        let stripped = line.trim();
+
+        // Blank line
+        if stripped.is_empty() {
+            blank_count += 1;
+            continue;
+        }
+
+        // Content line (non-blank, non-fence, outside code)
+        let new_block = starts_new_block(stripped);
+
+        if buffer.is_empty() {
+            // Nothing in the buffer yet
+            if blank_count > 0 {
+                // Emit blank lines that preceded this content
+                for _ in 0..std::cmp::min(blank_count, 2) {
+                    output.push(String::new());
+                }
+            }
+            blank_count = 0;
+            buffer = stripped.to_string();
+        } else {
+            // Buffer is non-empty
+            if blank_count >= 2 {
+                // Two or more blanks: flush buffer, add blank line
+                flush_buffer(&mut buffer, &mut output);
+                output.push(String::new());
+                blank_count = 0;
+                buffer = stripped.to_string();
+            } else if blank_count == 1 {
+                // Single blank: check if we should preserve the break
+                if new_block || should_preserve_blank_line(&buffer, stripped) {
+                    flush_buffer(&mut buffer, &mut output);
+                    output.push(String::new());
+                    buffer = stripped.to_string();
+                } else {
+                    // Join across the single blank
+                    join_to_buffer(&mut buffer, stripped);
+                }
+                blank_count = 0;
+            } else {
+                // No blanks: join lines
+                if new_block {
+                    flush_buffer(&mut buffer, &mut output);
+                    buffer = stripped.to_string();
+                } else {
+                    join_to_buffer(&mut buffer, stripped);
+                }
+            }
+        }
+    }
+
+    // Flush remaining buffer
+    if !buffer.is_empty() {
+        output.push(buffer);
+    }
+
+    output.join("\n")
+}
+
+/// Join a new line fragment onto the buffer. If the buffer ends with `-`,
+/// remove the hyphen and concatenate directly; otherwise join with a space.
+fn join_to_buffer(buffer: &mut String, line: &str) {
+    if buffer.ends_with('-') {
+        buffer.pop();
+        buffer.push_str(line);
+    } else {
+        buffer.push(' ');
+        buffer.push_str(line);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +631,64 @@ mod tests {
         let text = "Short\nAlso short";
         let result = remove_blank_between_short_lines(text, 24);
         assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_strip_repeated_lines() {
+        let mut lines = Vec::new();
+        for i in 0..5 {
+            lines.push("Page Header".to_string());
+            for j in 0..10 {
+                lines.push(format!("Content line {} on page {}", j, i));
+            }
+        }
+        let text = lines.join("\n");
+        let (result, removed) = strip_repeated_lines(&text, 10, 0.8, 12);
+        assert!(!result.contains("Page Header"));
+        assert!(!removed.is_empty());
+    }
+
+    #[test]
+    fn test_strip_repeated_lines_preserves_unique() {
+        let text = "Line A\nLine B\nLine C\nLine D";
+        let (result, removed) = strip_repeated_lines(text, 50, 0.8, 12);
+        assert_eq!(result, text);
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_merge_broken_lines_basic() {
+        let text = "This is a broken\nsentence that should\nbe merged together.";
+        let result = merge_broken_lines(text);
+        assert!(result.contains("This is a broken sentence that should be merged together."));
+    }
+
+    #[test]
+    fn test_merge_broken_lines_preserves_code() {
+        let text = "Text before\n```\ncode line 1\ncode line 2\n```\nText after";
+        let result = merge_broken_lines(text);
+        assert!(result.contains("code line 1\ncode line 2"));
+    }
+
+    #[test]
+    fn test_merge_broken_lines_preserves_lists() {
+        let text = "Introduction\n\n- Item one\n- Item two\n\nConclusion";
+        let result = merge_broken_lines(text);
+        assert!(result.contains("- Item one"));
+        assert!(result.contains("- Item two"));
+    }
+
+    #[test]
+    fn test_merge_broken_lines_hyphen_join() {
+        let text = "The re-\nsearch was good";
+        let result = merge_broken_lines(text);
+        assert!(result.contains("research"));
+    }
+
+    #[test]
+    fn test_merge_broken_lines_preserves_headings() {
+        let text = "Some text\n\n# Heading\n\nMore text";
+        let result = merge_broken_lines(text);
+        assert!(result.contains("# Heading"));
     }
 }
