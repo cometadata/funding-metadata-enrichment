@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RecoveryConfidence {
     None_,
     Low,
@@ -17,7 +17,7 @@ pub struct WordRecoveryResult {
     pub issues: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureCategory {
     Success,
     PartialSuccess,
