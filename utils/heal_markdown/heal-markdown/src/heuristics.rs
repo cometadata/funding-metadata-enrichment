@@ -144,6 +144,14 @@ pub fn remove_blank_between_short_lines(text: &str, max_len: usize) -> String {
         return text.to_string();
     }
 
+    let is_structural = |line: &str| -> bool {
+        let t = line.trim();
+        t.starts_with('#')
+            || LIST_MARKER_PATTERN.is_match(t)
+            || UNORDERED_MARKER_PATTERN.is_match(t)
+            || t.starts_with('>')
+    };
+
     let mut keep = vec![true; lines.len()];
 
     for i in 1..lines.len() - 1 {
@@ -154,6 +162,8 @@ pub fn remove_blank_between_short_lines(text: &str, max_len: usize) -> String {
                 && !next.trim().is_empty()
                 && prev.len() <= max_len
                 && next.len() <= max_len
+                && !is_structural(prev)
+                && !is_structural(next)
             {
                 keep[i] = false;
             }
@@ -631,6 +641,28 @@ mod tests {
         let text = "Short\nAlso short";
         let result = remove_blank_between_short_lines(text, 24);
         assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_remove_blank_between_short_lines_preserves_headings() {
+        let text = "# Test\n\nSome text";
+        let result = remove_blank_between_short_lines(text, 24);
+        assert!(
+            result.contains("\n\n"),
+            "Blank line after heading should be preserved, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_remove_blank_between_short_lines_preserves_list_items() {
+        let text = "Intro\n\n- Item one";
+        let result = remove_blank_between_short_lines(text, 24);
+        assert!(
+            result.contains("\n\n"),
+            "Blank line before list item should be preserved, got: {}",
+            result
+        );
     }
 
     #[test]
