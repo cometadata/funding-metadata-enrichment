@@ -1,6 +1,7 @@
 mod dictionary;
 mod failure;
 mod heuristics;
+mod io;
 mod markdown;
 mod pipeline;
 mod recovery;
