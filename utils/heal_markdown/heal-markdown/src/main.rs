@@ -1,3 +1,4 @@
+mod dictionary;
 mod types;
 
 fn main() {
