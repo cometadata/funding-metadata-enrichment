@@ -14,6 +14,12 @@ pub fn format_markdown(text: &str) -> String {
     }
 }
 
+/// Remove backslash escapes from brackets introduced by pulldown-cmark-to-cmark.
+/// In academic PDF extractions, `\[` and `\]` are almost never intentional.
+pub fn unescape_brackets(text: &str) -> String {
+    text.replace("\\[", "[").replace("\\]", "]")
+}
+
 /// Validates markdown structure, returning a list of warning messages.
 ///
 /// Checks for:
@@ -109,5 +115,31 @@ mod tests {
         let text = "```\nblock1\n```\n\n```\nblock2\n";
         let warnings = validate_markdown(text);
         assert!(warnings.iter().any(|w| w.contains("unbalanced")));
+    }
+
+    #[test]
+    fn test_unescape_brackets_citations() {
+        let text = "See \\[1\\], \\[2\\], \\[3\\] for details.";
+        let result = unescape_brackets(text);
+        assert_eq!(result, "See [1], [2], [3] for details.");
+    }
+
+    #[test]
+    fn test_unescape_brackets_expression() {
+        let text = "The \\[expression\\] is valid.";
+        let result = unescape_brackets(text);
+        assert_eq!(result, "The [expression] is valid.");
+    }
+
+    #[test]
+    fn test_unescape_brackets_no_escapes() {
+        let text = "Normal text with [brackets] and no escapes.";
+        let result = unescape_brackets(text);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_unescape_brackets_empty() {
+        assert_eq!(unescape_brackets(""), "");
     }
 }

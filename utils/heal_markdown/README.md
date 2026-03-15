@@ -1,77 +1,97 @@
-# Heal Markdown
+# heal-markdown
 
-Script for healing markdown files from PDF conversions to resemble something like a more human-readable format. 
+A Rust utility for restoring PDF-extracted markdown into readable format.
 
-
-## Installation
+## Build
 
 ```bash
-pip install -r requirements.txt
+cargo build --release
 ```
+
+The release binary will be at `target/release/heal-markdown`.
 
 ## Usage
 
-### Process parquet file to parquet output
+### Process a single file
+
 ```bash
-python heal_markdown.py input.parquet --out-dir output --output-format parquet
+heal-markdown path/to/file.md
 ```
 
-### Process parquet to markdown files
+Output is written alongside the original as `file.healed.md`.
+
+### Process a directory
+
 ```bash
-python heal_markdown.py input.parquet --out-dir output --output-format markdown
+heal-markdown path/to/dir/ --out-dir output/
 ```
 
-### Process parquet to both formats
+Recursively finds all `.md` files and writes cleaned versions to `output/`, preserving directory structure.
+
+### Process in place
+
 ```bash
-python heal_markdown.py input.parquet --out-dir output --output-format both
+heal-markdown path/to/dir/ --in-place
 ```
 
-### Process individual markdown files (backward compatible)
+Overwrites original files with cleaned versions.
+
+### Process Parquet input
+
 ```bash
-python heal_markdown.py document.md --out-dir output
-python heal_markdown.py directory/ --out-dir output
+heal-markdown input.parquet --out-dir output/ --output-format parquet
 ```
 
-## Column Auto-Detection
+Reads a Parquet file with `filename` and `content` columns, processes each document, and writes results to a new Parquet file.
 
-For parquet input, automatically detects columns:
-- **Filename**: `file_name`, `filename`, `relative_path`, `name`, `path` (fallback: row index)
-- **Content**: `content`, `text`, `markdown`, `md`, `body` (required)
+### Process Parquet to both formats
 
-## Output Files
+```bash
+heal-markdown input.parquet --out-dir output/ --output-format both
+```
 
-### Cleaned Parquet Schema
-- `file_name`: Document identifier
-- `content`: Cleaned markdown
-- `warnings`: Processing warnings
-- `success`: Success flag
-- `original_size`, `output_size`: Size metrics
+Writes both a Parquet file with cleaned content and individual markdown files.
 
-### Failed Parquet Schema
-- `file_name`: Document identifier
-- `original_content`: Original text
-- `cleaned_content`: Best-effort cleaned text
-- `failure_category`: `unrecoverable`, `partial`, `needs_review`, etc.
-- `issues`: Detailed issue descriptions
-- `recovery_attempted`, `recovery_confidence`: Recovery metadata
-- `recoverable`: Manual recovery feasibility
-- `validation_error`: Original error message
+## CLI Options
 
-## Options
+```
+Restore PDF-extracted Markdown into readable CommonMark.
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--output-format` | `markdown`, `parquet`, or `both` | Same as input |
-| `--out-dir` | Output directory | Required for parquet input |
-| `--failed-output` | Failed records parquet path | `{out-dir}/failed.parquet` |
-| `--in-place` | Overwrite original files | False |
-| `--page-lines` | Lines per page for header detection | 50 |
-| `--repeat-threshold` | Frequency threshold for repeated lines | 0.8 |
-| `--skip-tables` | Disable table reconstruction | False |
-| `--strip-citations` | Remove `[12]` style citations | False |
-| `--exclude-failed` | Skip empty conversions | False |
+Usage: heal-markdown [OPTIONS] <PATH>
 
+Arguments:
+  <PATH>  Markdown file, directory, or Parquet file to process
 
-**Output:**
-- `cleaned_output/test_sample_cleaned.parquet` - Successfully cleaned documents
-- `cleaned_output/failed.parquet` - Documents with issues requiring review
+Options:
+      --in-place
+          Overwrite files instead of writing alongside originals
+      --out-dir <OUT_DIR>
+          Directory to write cleaned files
+      --page-lines <PAGE_LINES>
+          Lines per page for header/footer detection [default: 50]
+      --repeat-threshold <REPEAT_THRESHOLD>
+          Frequency threshold for repeated line removal [default: 0.8]
+      --max-header-words <MAX_HEADER_WORDS>
+          Max words for repeated line candidates [default: 12]
+      --skip-tables
+          No-op, accepted for compatibility (table repair deferred)
+      --strip-citations
+          Remove [12]-style bracketed citations
+      --exclude-failed
+          Exclude files that convert to zero bytes
+      --output-format <OUTPUT_FORMAT>
+          Output format: markdown, parquet, or both [possible values: markdown, parquet, both]
+      --failed-output <FAILED_OUTPUT>
+          Path for failed records Parquet file
+      --threads <THREADS>
+          Number of parallel threads
+  -h, --help
+          Print help
+```
+
+## Notes
+
+- `--skip-tables` is accepted for CLI compatibility with the Python version but is a no-op. Table repair is deferred to a future release.
+- `--threads` controls the number of Rayon worker threads used for parallel processing. By default, Rayon uses one thread per logical CPU core.
+- When processing Parquet input, the tool expects columns named `filename` and `content`.
+- The `--failed-output` option writes a separate Parquet file containing documents that failed validation or produced zero-byte output, along with failure categorization metadata.

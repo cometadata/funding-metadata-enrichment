@@ -21,6 +21,17 @@ static LEADING_ALPHA_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z]{4
 static LIST_MARKER_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(\d+\.|[A-Za-z]\.)\s").unwrap());
 static UNORDERED_MARKER_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[-*+]\s").unwrap());
+static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"  +").unwrap());
+static ARXIV_WATERMARK_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"viXra|^\s*arXiv:\d{4}\.\d{4,5}v?\d*\s*$").unwrap());
+pub static CAPTION_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^(?:Fig(?:ure|\.)?|FIG\.?|Table|TAB\.?)\s*\d+").unwrap());
+static TABLE_SEPARATOR_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*\|?\s*(?::?---+:?\s*\|?\s*)+$").unwrap());
+static REF_ENTRY_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*\[?\d+\]\.?\s").unwrap());
+static REF_BRACKET_ENTRY_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*\[\d+\]").unwrap());
 
 /// Scan lines, skip blanks, find first line with at least 4 consecutive alpha
 /// chars or that starts with `#`. If material was trimmed, return the trimmed
@@ -220,6 +231,332 @@ pub fn fix_hyphenation(text: &str) -> String {
         .into_owned()
 }
 
+/// Remove lines containing arXiv/viXra watermark identifiers.
+/// These appear as garbled reversed text in PDF extractions.
+pub fn remove_arxiv_watermarks(text: &str) -> String {
+    text.lines()
+        .filter(|line| !ARXIV_WATERMARK_PATTERN.is_match(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Collapse runs of 2+ spaces into a single space within lines, skipping code blocks.
+pub fn collapse_multiple_spaces(text: &str) -> String {
+    let mut result_lines: Vec<String> = Vec::new();
+    let mut in_code = false;
+
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+            result_lines.push(line.to_string());
+            continue;
+        }
+        if in_code {
+            result_lines.push(line.to_string());
+        } else {
+            result_lines.push(MULTI_SPACE_PATTERN.replace_all(line, " ").into_owned());
+        }
+    }
+
+    result_lines.join("\n")
+}
+
+/// Deduplicate consecutive identical Unicode Mathematical Alphanumeric Symbols
+/// (U+1D400–U+1D7FF). PDF extraction often doubles these characters.
+pub fn deduplicate_unicode_math(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut in_code = false;
+    let mut first_line = true;
+
+    for line in text.lines() {
+        if !first_line {
+            result.push('\n');
+        }
+        first_line = false;
+
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+            result.push_str(line);
+            continue;
+        }
+        if in_code {
+            result.push_str(line);
+            continue;
+        }
+
+        let mut prev_char: Option<char> = None;
+        for ch in line.chars() {
+            let dominated = if let Some(prev) = prev_char {
+                ch == prev && is_math_symbol(ch)
+            } else {
+                false
+            };
+            if !dominated {
+                result.push(ch);
+            }
+            prev_char = Some(ch);
+        }
+    }
+
+    result
+}
+
+/// Returns true if the character is in the Unicode Mathematical Alphanumeric
+/// Symbols block (U+1D400–U+1D7FF).
+fn is_math_symbol(ch: char) -> bool {
+    ('\u{1D400}'..='\u{1D7FF}').contains(&ch)
+}
+
+/// Detect and remove garbled markdown table syntax from PDF two-column extractions.
+///
+/// A contiguous block of table-like lines is considered "spurious" if most of its
+/// rows are separator-only or have predominantly empty cells.
+pub fn strip_spurious_tables(text: &str) -> (String, Vec<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result_lines: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Check if this line looks like table syntax
+        if is_table_line(lines[i]) {
+            // Collect the contiguous block of table-like lines
+            let block_start = i;
+            while i < lines.len() && (is_table_line(lines[i]) || lines[i].trim().is_empty()) {
+                i += 1;
+            }
+            let block = &lines[block_start..i];
+
+            // Determine if the table block is spurious
+            let non_empty: Vec<&&str> = block.iter().filter(|l| !l.trim().is_empty()).collect();
+            if non_empty.is_empty() {
+                // All blank lines, keep them
+                for line in block {
+                    result_lines.push(line.to_string());
+                }
+                continue;
+            }
+
+            let separator_count = non_empty
+                .iter()
+                .filter(|l| TABLE_SEPARATOR_PATTERN.is_match(l))
+                .count();
+            let separator_ratio = separator_count as f64 / non_empty.len() as f64;
+
+            let avg_cell_content = average_cell_content(&non_empty);
+            let avg_columns = average_column_count(&non_empty);
+
+            let is_spurious = separator_ratio > 0.4
+                || (avg_cell_content < 3.0 && non_empty.len() > 2)
+                || (avg_columns > 6.0 && avg_cell_content < 5.0);
+
+            if is_spurious {
+                warnings.push(format!(
+                    "Removed spurious table block: lines {}-{} ({} lines)",
+                    block_start + 1,
+                    block_start + block.len(),
+                    block.len()
+                ));
+                // Keep any lines that look like prose (no leading pipe)
+                let mut kept_any = false;
+                for line in block {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with('|')
+                        && !TABLE_SEPARATOR_PATTERN.is_match(trimmed)
+                    {
+                        result_lines.push(line.to_string());
+                        kept_any = true;
+                    }
+                }
+                // Preserve paragraph separation after removed table
+                if !kept_any {
+                    result_lines.push(String::new());
+                }
+            } else {
+                // Keep the whole table block
+                for line in block {
+                    result_lines.push(line.to_string());
+                }
+            }
+        } else {
+            result_lines.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    (result_lines.join("\n"), warnings)
+}
+
+/// Check if a line looks like markdown table syntax.
+fn is_table_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Separator row
+    if TABLE_SEPARATOR_PATTERN.is_match(trimmed) {
+        return true;
+    }
+    // Lines starting with | that have at least one more | are table rows
+    if trimmed.starts_with('|') && trimmed.matches('|').count() >= 2 {
+        return true;
+    }
+    false
+}
+
+/// Average content length of non-separator cells in table-like lines.
+fn average_cell_content(lines: &[&&str]) -> f64 {
+    let mut total_content = 0usize;
+    let mut cell_count = 0usize;
+
+    for line in lines {
+        if TABLE_SEPARATOR_PATTERN.is_match(line) {
+            continue;
+        }
+        for segment in line.split('|') {
+            let trimmed = segment.trim();
+            if !trimmed.is_empty() {
+                total_content += trimmed.len();
+                cell_count += 1;
+            }
+        }
+    }
+
+    if cell_count == 0 {
+        0.0
+    } else {
+        total_content as f64 / cell_count as f64
+    }
+}
+
+/// Average number of columns (pipe-separated segments) in non-separator lines.
+fn average_column_count(lines: &[&&str]) -> f64 {
+    let mut total_cols = 0usize;
+    let mut line_count = 0usize;
+
+    for line in lines {
+        if TABLE_SEPARATOR_PATTERN.is_match(line) {
+            continue;
+        }
+        let cols = line.split('|').count();
+        total_cols += cols;
+        line_count += 1;
+    }
+
+    if line_count == 0 {
+        0.0
+    } else {
+        total_cols as f64 / line_count as f64
+    }
+}
+
+/// In reference sections, merge lines separated by single blank lines when the
+/// next line doesn't start a new reference entry (i.e., it's a continuation).
+pub fn merge_broken_references(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut in_refs = false;
+    let mut buffer = String::new();
+    let mut blank_seen = false;
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        // Detect reference section start
+        if !in_refs {
+            if is_reference_heading(trimmed) {
+                in_refs = true;
+            }
+            result.push(line.to_string());
+            continue;
+        }
+
+        // Inside reference section
+        if trimmed.is_empty() {
+            if buffer.is_empty() {
+                result.push(String::new());
+            } else {
+                blank_seen = true;
+            }
+            continue;
+        }
+
+        let is_new_ref = REF_ENTRY_PATTERN.is_match(trimmed)
+            || REF_BRACKET_ENTRY_PATTERN.is_match(trimmed);
+
+        if buffer.is_empty() {
+            buffer = trimmed.to_string();
+            blank_seen = false;
+        } else if blank_seen && !is_new_ref {
+            // Continuation of previous reference across a blank line
+            buffer.push(' ');
+            buffer.push_str(trimmed);
+            blank_seen = false;
+        } else {
+            // Flush previous reference
+            result.push(buffer);
+            if blank_seen {
+                result.push(String::new());
+            }
+            buffer = trimmed.to_string();
+            blank_seen = false;
+        }
+    }
+
+    // Flush remaining buffer
+    if !buffer.is_empty() {
+        result.push(buffer);
+    }
+
+    result.join("\n")
+}
+
+/// Check if a line is a reference section heading.
+fn is_reference_heading(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    let cleaned = lower.trim_start_matches('#').trim();
+    cleaned == "references" || cleaned == "bibliography" || cleaned == "works cited"
+}
+
+/// In reference sections, detect and fix duplicate reference numbers by
+/// renumbering sequentially.
+pub fn renumber_references(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut in_refs = false;
+    let mut counter = 0u32;
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        if !in_refs {
+            if is_reference_heading(trimmed) {
+                in_refs = true;
+                counter = 0;
+            }
+            result.push(line.to_string());
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            result.push(line.to_string());
+            continue;
+        }
+
+        // Try to match [N] pattern
+        if let Some(caps) = REF_BRACKET_ENTRY_PATTERN.find(trimmed) {
+            counter += 1;
+            let after = &trimmed[caps.end()..];
+            result.push(format!("[{}]{}", counter, after));
+        } else {
+            result.push(line.to_string());
+        }
+    }
+
+    result.join("\n")
+}
+
 /// Cap consecutive blank lines at 2, and right-strip each line.
 pub fn collapse_blank_lines(text: &str) -> String {
     let mut result_lines: Vec<String> = Vec::new();
@@ -310,6 +647,7 @@ pub fn merge_broken_lines(text: &str) -> String {
             || UNORDERED_MARKER_PATTERN.is_match(line)
             || line.starts_with('>')
             || line.starts_with('#')
+            || CAPTION_PATTERN.is_match(line)
     };
 
     let flush_buffer = |buffer: &mut String, output: &mut Vec<String>| {
@@ -704,5 +1042,239 @@ mod tests {
         let text = "Some text\n\n# Heading\n\nMore text";
         let result = merge_broken_lines(text);
         assert!(result.contains("# Heading"));
+    }
+
+    // --- Tests for remove_arxiv_watermarks ---
+
+    #[test]
+    fn test_remove_arxiv_watermarks_vixra() {
+        let text = "Content here\n0102 ceD 11  ]GD.htam[  2v3964.1101:viXra\nMore content";
+        let result = remove_arxiv_watermarks(text);
+        assert!(!result.contains("viXra"));
+        assert!(result.contains("Content here"));
+        assert!(result.contains("More content"));
+    }
+
+    #[test]
+    fn test_remove_arxiv_watermarks_arxiv_id() {
+        let text = "Some text\narXiv:2211.05032\nMore text";
+        let result = remove_arxiv_watermarks(text);
+        assert!(!result.contains("arXiv:2211.05032"));
+        assert!(result.contains("Some text"));
+    }
+
+    #[test]
+    fn test_remove_arxiv_watermarks_preserves_inline_citation() {
+        let text = "As shown in arXiv:2301.12345, the method works well.";
+        let result = remove_arxiv_watermarks(text);
+        assert_eq!(result, text, "Inline arXiv citations should be preserved");
+    }
+
+    #[test]
+    fn test_remove_arxiv_watermarks_preserves_reference_entry() {
+        let text = "[42] Smith et al. arXiv:2301.12345.";
+        let result = remove_arxiv_watermarks(text);
+        assert_eq!(result, text, "Reference entries with arXiv IDs should be preserved");
+    }
+
+    #[test]
+    fn test_remove_arxiv_watermarks_no_watermark() {
+        let text = "Normal academic text without watermarks.";
+        let result = remove_arxiv_watermarks(text);
+        assert_eq!(result, text);
+    }
+
+    // --- Tests for collapse_multiple_spaces ---
+
+    #[test]
+    fn test_collapse_multiple_spaces_basic() {
+        let text = "The  observational  results  confirm";
+        let result = collapse_multiple_spaces(text);
+        assert_eq!(result, "The observational results confirm");
+    }
+
+    #[test]
+    fn test_collapse_multiple_spaces_many() {
+        let text = "word     word";
+        let result = collapse_multiple_spaces(text);
+        assert_eq!(result, "word word");
+    }
+
+    #[test]
+    fn test_collapse_multiple_spaces_preserves_code() {
+        let text = "Normal  text\n```\ncode  with  spaces\n```\nMore  text";
+        let result = collapse_multiple_spaces(text);
+        assert!(result.contains("Normal text"));
+        assert!(result.contains("code  with  spaces"));
+        assert!(result.contains("More text"));
+    }
+
+    #[test]
+    fn test_collapse_multiple_spaces_single_space() {
+        let text = "Already single spaced text.";
+        let result = collapse_multiple_spaces(text);
+        assert_eq!(result, text);
+    }
+
+    // --- Tests for deduplicate_unicode_math ---
+
+    #[test]
+    fn test_deduplicate_unicode_math_doubled() {
+        // 𝜕 is U+1D715
+        let text = "The value 𝜕𝜕 is important";
+        let result = deduplicate_unicode_math(text);
+        assert_eq!(result, "The value 𝜕 is important");
+    }
+
+    #[test]
+    fn test_deduplicate_unicode_math_multiple_pairs() {
+        // 𝐸 is U+1D438, 𝜀 is U+1D700
+        let text = "𝜀𝜀0𝐸𝐸";
+        let result = deduplicate_unicode_math(text);
+        assert_eq!(result, "𝜀0𝐸");
+    }
+
+    #[test]
+    fn test_deduplicate_unicode_math_triple() {
+        let text = "𝜕𝜕𝜕";
+        let result = deduplicate_unicode_math(text);
+        assert_eq!(result, "𝜕");
+    }
+
+    #[test]
+    fn test_deduplicate_unicode_math_preserves_ascii() {
+        let text = "The letters ee and oo are normal";
+        let result = deduplicate_unicode_math(text);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_deduplicate_unicode_math_preserves_code() {
+        let text = "text\n```\n𝜕𝜕\n```\nmore";
+        let result = deduplicate_unicode_math(text);
+        assert!(result.contains("𝜕𝜕"), "Code block content should be preserved");
+    }
+
+    // --- Tests for strip_spurious_tables ---
+
+    #[test]
+    fn test_strip_spurious_tables_separator_only() {
+        let text = "Content before\n| --- | --- | --- |\n| --- | --- | --- |\nContent after";
+        let (result, warnings) = strip_spurious_tables(text);
+        assert!(result.contains("Content before"));
+        assert!(result.contains("Content after"));
+        assert!(!result.contains("---"));
+        assert!(!warnings.is_empty());
+    }
+
+    #[test]
+    fn test_strip_spurious_tables_preserves_real_table() {
+        let text = "| Header 1 | Header 2 |\n| --- | --- |\n| Data 1 | Data 2 |";
+        let (result, warnings) = strip_spurious_tables(text);
+        assert!(result.contains("Header 1"));
+        assert!(result.contains("Data 1"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_strip_spurious_tables_empty_cells() {
+        let text = "|  |  | a |  |\n| --- | --- | --- | --- |\n|  | b |  |  |\n|  |  |  |  |";
+        let (_result, warnings) = strip_spurious_tables(text);
+        assert!(!warnings.is_empty());
+    }
+
+    // --- Tests for merge_broken_lines with captions ---
+
+    #[test]
+    fn test_merge_broken_lines_preserves_figure_caption() {
+        let text = "Some text here.\nFigure 1. This is a caption.\nMore text follows.";
+        let result = merge_broken_lines(text);
+        // Figure caption should start on its own line
+        assert!(
+            result.contains("\nFigure 1."),
+            "Figure caption should be on its own line, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_merge_broken_lines_preserves_table_caption() {
+        let text = "Some text here.\nTable 2: Data summary.\nMore text follows.";
+        let result = merge_broken_lines(text);
+        assert!(
+            result.contains("\nTable 2:"),
+            "Table caption should be on its own line, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_merge_broken_lines_preserves_fig_caption() {
+        let text = "Some text.\nFIG. 3. Caption text.\nMore text.";
+        let result = merge_broken_lines(text);
+        assert!(
+            result.contains("\nFIG. 3."),
+            "FIG caption should be on its own line, got: {}",
+            result
+        );
+    }
+
+    // --- Tests for merge_broken_references ---
+
+    #[test]
+    fn test_merge_broken_references_splits() {
+        let text =
+            "## References\n\n[18] Author Name. Title.\n\nPublisher, 2009.\n\n[19] Another ref.";
+        let result = merge_broken_references(text);
+        assert!(
+            result.contains("[18] Author Name. Title. Publisher, 2009."),
+            "Split reference should be merged, got: {}",
+            result
+        );
+        assert!(result.contains("[19] Another ref."));
+    }
+
+    #[test]
+    fn test_merge_broken_references_no_merge_across_entries() {
+        let text = "References\n\n[1] First reference.\n\n[2] Second reference.";
+        let result = merge_broken_references(text);
+        assert!(result.contains("[1] First reference."));
+        assert!(result.contains("[2] Second reference."));
+    }
+
+    #[test]
+    fn test_merge_broken_references_only_in_refs_section() {
+        let text = "Some paragraph.\n\nAnother paragraph.\n\nContinuation.";
+        let result = merge_broken_references(text);
+        assert_eq!(result, text);
+    }
+
+    // --- Tests for renumber_references ---
+
+    #[test]
+    fn test_renumber_references_duplicates() {
+        let text = "References\n\n[1] Ref A.\n[2] Ref B.\n[3] Ref C.\n[3] Ref D.\n[3] Ref E.";
+        let result = renumber_references(text);
+        assert!(result.contains("[1] Ref A."));
+        assert!(result.contains("[2] Ref B."));
+        assert!(result.contains("[3] Ref C."));
+        assert!(result.contains("[4] Ref D."));
+        assert!(result.contains("[5] Ref E."));
+    }
+
+    #[test]
+    fn test_renumber_references_already_sequential() {
+        let text = "References\n\n[1] A.\n[2] B.\n[3] C.";
+        let result = renumber_references(text);
+        assert!(result.contains("[1] A."));
+        assert!(result.contains("[2] B."));
+        assert!(result.contains("[3] C."));
+    }
+
+    #[test]
+    fn test_renumber_references_only_in_refs_section() {
+        let text = "[1] Not in refs.\n[2] Also not.";
+        let result = renumber_references(text);
+        assert_eq!(result, text);
     }
 }

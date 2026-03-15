@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::heuristics::CAPTION_PATTERN;
+
 const MAX_REASONABLE_LINE: usize = 1000;
 const LONG_LINE_FRACTION: f64 = 0.20;
 const MIN_WHITESPACE_RATIO: f64 = 0.05;
@@ -198,6 +200,11 @@ pub fn should_preserve_blank_line(prev: &str, next: &str) -> bool {
 
     // Between section headers
     if is_section_header(prev_trimmed) || is_section_header(next_trimmed) {
+        return true;
+    }
+
+    // Around figure/table captions
+    if CAPTION_PATTERN.is_match(prev_trimmed) || CAPTION_PATTERN.is_match(next_trimmed) {
         return true;
     }
 
@@ -424,6 +431,30 @@ mod tests {
         assert!(!should_preserve_blank_line(
             long_incomplete,
             "continuation of the text in lowercase"
+        ));
+    }
+
+    #[test]
+    fn test_should_preserve_blank_line_before_figure_caption() {
+        assert!(should_preserve_blank_line(
+            "this is a long line that does not end with punctuation and keeps going on and on",
+            "Figure 1. Caption text here."
+        ));
+    }
+
+    #[test]
+    fn test_should_preserve_blank_line_after_figure_caption() {
+        assert!(should_preserve_blank_line(
+            "Figure 2. The experimental setup is shown.",
+            "continuation of text here"
+        ));
+    }
+
+    #[test]
+    fn test_should_preserve_blank_line_table_caption() {
+        assert!(should_preserve_blank_line(
+            "this is a long line that does not end with punctuation and keeps going on and on",
+            "Table 3: Summary of results."
         ));
     }
 }

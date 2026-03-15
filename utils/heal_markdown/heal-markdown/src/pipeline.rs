@@ -1,11 +1,13 @@
 use plsfix::fix_text;
 
 use crate::heuristics::{
-    collapse_blank_lines, drop_short_line_runs, fix_hyphenation, merge_broken_lines,
-    merge_short_fragments, normalize_bullets, remove_blank_between_short_lines,
-    remove_citations_and_noise, remove_footer_patterns, strip_repeated_lines, trim_leading_noise,
+    collapse_blank_lines, collapse_multiple_spaces, deduplicate_unicode_math,
+    drop_short_line_runs, fix_hyphenation, merge_broken_lines, merge_broken_references,
+    merge_short_fragments, normalize_bullets, remove_arxiv_watermarks,
+    remove_blank_between_short_lines, remove_citations_and_noise, remove_footer_patterns,
+    renumber_references, strip_repeated_lines, strip_spurious_tables, trim_leading_noise,
 };
-use crate::markdown::{format_markdown, validate_markdown};
+use crate::markdown::{format_markdown, unescape_brackets, validate_markdown};
 use crate::types::RestorationOptions;
 
 pub fn restore_markdown(text: &str, options: &RestorationOptions) -> (String, Vec<String>) {
@@ -37,7 +39,18 @@ pub fn restore_markdown(text: &str, options: &RestorationOptions) -> (String, Ve
     // Step 4: Remove footer patterns
     text = remove_footer_patterns(&text);
 
-    // Step 5: Drop short line runs
+    // Step 5: Remove arXiv/viXra watermark lines
+    text = remove_arxiv_watermarks(&text);
+
+    // Step 6: Strip spurious table markup
+    let (t, table_warnings) = strip_spurious_tables(&text);
+    text = t;
+    if !table_warnings.is_empty() {
+        let preview: Vec<_> = table_warnings.iter().take(3).cloned().collect();
+        warnings.push(format!("Stripped spurious tables: {}", preview.join("; ")));
+    }
+
+    // Step 7: Drop short line runs
     let (t, short_runs) = drop_short_line_runs(&text, 3, 5);
     text = t;
     if !short_runs.is_empty() {
@@ -45,35 +58,50 @@ pub fn restore_markdown(text: &str, options: &RestorationOptions) -> (String, Ve
         warnings.push(format!("Dropped short-line runs: {}", preview.join(", ")));
     }
 
-    // Step 6: Remove citations and noise
+    // Step 8: Remove citations and noise
     text = remove_citations_and_noise(&text, options.strip_citations);
 
-    // Step 7: Remove blank lines between short lines
+    // Step 9: Remove blank lines between short lines
     text = remove_blank_between_short_lines(&text, 24);
 
-    // Step 8: Merge short fragments
+    // Step 10: Merge short fragments
     let (t, merged_fragments) = merge_short_fragments(&text, 12, 6);
     text = t;
     if merged_fragments {
         warnings.push("Merged clusters of short fragments".to_string());
     }
 
-    // Step 9: Normalize bullets
+    // Step 11: Normalize bullets
     text = normalize_bullets(&text);
 
-    // Step 10: Fix hyphenation
+    // Step 12: Fix hyphenation
     text = fix_hyphenation(&text);
 
-    // Step 11: Merge broken lines
+    // Step 13: Merge broken lines (with figure/table caption awareness)
     text = merge_broken_lines(&text);
 
-    // Step 12: Collapse blank lines
+    // Step 14: Merge broken reference entries
+    text = merge_broken_references(&text);
+
+    // Step 15: Collapse multiple consecutive spaces
+    text = collapse_multiple_spaces(&text);
+
+    // Step 16: Collapse blank lines
     text = collapse_blank_lines(&text);
 
-    // Step 13: Format markdown
+    // Step 17: Deduplicate Unicode math characters
+    text = deduplicate_unicode_math(&text);
+
+    // Step 18: Format markdown
     text = format_markdown(&text);
 
-    // Step 14: Validate markdown
+    // Step 19: Unescape brackets from pulldown-cmark
+    text = unescape_brackets(&text);
+
+    // Step 20: Renumber duplicate references
+    text = renumber_references(&text);
+
+    // Step 21: Validate markdown
     warnings.extend(validate_markdown(&text));
 
     (text, warnings)
