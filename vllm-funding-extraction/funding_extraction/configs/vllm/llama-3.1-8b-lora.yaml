@@ -9,7 +9,7 @@ lora:
 
 engine:
   tensor_parallel_size: 1
-  max_model_len: 4096
+  max_model_len: 8192
   gpu_memory_utilization: 0.9
   dtype: "auto"
   quantization: null
