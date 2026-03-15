@@ -2,7 +2,7 @@ model: "meta-llama/Llama-3.1-8B-Instruct"
 mode: "offline"
 
 lora:
-  path: "cometadata/funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft"
+  path: "cometadata/funding-parsing-lora-Llama_3.1_8B_Instruct-ep2-r16-a32-sft-ep1-r64-a128-synthetic"
   name: "funding-parsing-lora"
   max_rank: 64
   max_loras: 1
