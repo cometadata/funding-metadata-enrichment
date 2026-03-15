@@ -887,6 +887,50 @@ class TestDrainReasoning:
             assert provider.drain_reasoning() == []
 
 
+class TestTruncateAfterFirstFence:
+    def test_single_fence_unchanged(self):
+        from funding_extractor.providers.vllm import _truncate_after_first_fence
+
+        text = '```json\n{"key": "val"}\n```'
+        assert _truncate_after_first_fence(text) == text
+
+    def test_multiple_fences_keeps_first(self):
+        from funding_extractor.providers.vllm import _truncate_after_first_fence
+
+        first = '```json\n{"a": 1}\n```'
+        repeated = first + "  |  " + first + "  |  " + first
+        assert _truncate_after_first_fence(repeated) == first
+
+    def test_no_fence_unchanged(self):
+        from funding_extractor.providers.vllm import _truncate_after_first_fence
+
+        text = '{"key": "val"}'
+        assert _truncate_after_first_fence(text) == text
+
+    def test_unclosed_fence_unchanged(self):
+        from funding_extractor.providers.vllm import _truncate_after_first_fence
+
+        text = '```json\n{"key": "val"}'
+        assert _truncate_after_first_fence(text) == text
+
+    def test_infer_truncates_repeated_fences(self):
+        """infer() should return only the first fenced block."""
+        mocks = _make_mock_vllm()
+        with patch.dict(sys.modules, mocks):
+            from funding_extractor.providers.vllm import VLLMLanguageModel
+
+            mock_engine = MagicMock()
+            block = '```json\n{"funder": "NSF"}\n```'
+            repeated = block + "  |  " + block + "  |  " + block
+            mock_engine.generate.return_value = [_make_request_output(repeated)]
+            mocks["vllm"].LLM.return_value = mock_engine
+
+            model = VLLMLanguageModel(_base_config())
+            results = list(model.infer(["prompt"]))
+
+            assert results[0][0].output == block
+
+
 class TestPresencePenalty:
     def test_presence_penalty_passed_to_sampling_params(self):
         """Offline mode should pass presence_penalty to SamplingParams."""

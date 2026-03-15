@@ -16,6 +16,24 @@ logger = logging.getLogger(__name__)
 
 _THINK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
 _UNCLOSED_THINK_PATTERN = re.compile(r"<think>.*", re.DOTALL)
+_FENCE_OPEN = re.compile(r"```\w*\s*\n")
+
+
+def _truncate_after_first_fence(text: str) -> str:
+    """Keep only the first fenced code block in model output.
+
+    Offline vLLM generate() has no chat-template stop tokens, so models
+    (especially LoRA-tuned ones) often repeat the same ```json block
+    until max_tokens.  langextract expects exactly one fenced block and
+    raises FormatParseError otherwise.
+    """
+    open_match = _FENCE_OPEN.search(text)
+    if not open_match:
+        return text
+    close_idx = text.find("```", open_match.end())
+    if close_idx >= 0:
+        return text[: close_idx + 3]
+    return text
 
 
 class VLLMLanguageModel(BaseLanguageModel):
@@ -132,6 +150,7 @@ class VLLMLanguageModel(BaseLanguageModel):
             raw_text = output.outputs[0].text
             if self._enable_thinking:
                 raw_text = self._strip_thinking(raw_text)
+            raw_text = _truncate_after_first_fence(raw_text)
             yield [ScoredOutput(score=1.0, output=raw_text)]
 
 
