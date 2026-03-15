@@ -1,0 +1,10 @@
+docs/plans/
+
+# Rust
+heal-markdown/target/
+heal-markdown/Cargo.lock
+
+# Test samples
+test_samples/pdfs/
+test_samples/markdown/
+test_samples/healed/
