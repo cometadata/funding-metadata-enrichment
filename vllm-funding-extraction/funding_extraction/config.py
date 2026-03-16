@@ -8,6 +8,7 @@ import yaml
 class VLLMLoRAConfig:
     path: Optional[str] = None
     name: Optional[str] = None
+    subfolder: Optional[str] = None
     max_rank: int = 64
     max_loras: int = 1
 

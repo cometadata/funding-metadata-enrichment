@@ -130,3 +130,26 @@ def test_unknown_fields_ignored():
     path = _write_yaml(data)
     config = load_vllm_config(path)
     assert config.sampling.temperature == 0.5
+
+
+def test_lora_subfolder_default():
+    config = VLLMLoRAConfig()
+    assert config.subfolder is None
+
+
+def test_lora_subfolder_parsed():
+    data = {
+        "model": "test-model",
+        "mode": "online",
+        "server": {"url": "http://localhost:8000/v1"},
+        "lora": {
+            "path": "org/repo",
+            "subfolder": "student",
+            "name": "test-lora",
+        },
+    }
+    path = _write_yaml(data)
+    config = load_vllm_config(path)
+    assert config.lora.subfolder == "student"
+    assert config.lora.path == "org/repo"
+    assert config.lora.name == "test-lora"

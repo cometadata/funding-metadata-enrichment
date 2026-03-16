@@ -58,6 +58,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def resolve_lora_path(lora_config: dict) -> Optional[str]:
+    """Resolve a LoRA path, downloading from HF Hub if subfolder is specified."""
+    path = lora_config.get("path")
+    subfolder = lora_config.get("subfolder")
+    if not path or not subfolder:
+        return path
+    from huggingface_hub import snapshot_download
+    local_dir = snapshot_download(
+        repo_id=path,
+        allow_patterns=f"{subfolder}/**",
+    )
+    resolved = os.path.join(local_dir, subfolder)
+    logger.info("Resolved LoRA subfolder: %s -> %s", path, resolved)
+    return resolved
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run vLLM entity extraction on benchmark funding statements"
@@ -257,7 +273,7 @@ def start_vllm_server(model_id: str, config_data: dict, args: argparse.Namespace
     """Start vLLM server as a background process and wait for readiness."""
     port = getattr(args, "server_port", 8000)
     lora_config = config_data.get("lora", {})
-    lora_path = lora_config.get("path")
+    lora_path = resolve_lora_path(lora_config)
     lora_name = lora_config.get("name")
     sampling = config_data.get("sampling", {})
     enable_thinking = sampling.get("enable_thinking", False)
