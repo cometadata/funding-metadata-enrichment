@@ -1,7 +1,7 @@
 import json
 
-from funding_extractor.statements.io import write_statements_jsonl, read_statements_jsonl
-from funding_extractor.statements.models import FundingStatement
+from funding_statement_extractor.statements.io import write_statements_jsonl, read_statements_jsonl
+from funding_statement_extractor.statements.models import FundingStatement
 
 
 def test_write_and_read_roundtrip(tmp_path):

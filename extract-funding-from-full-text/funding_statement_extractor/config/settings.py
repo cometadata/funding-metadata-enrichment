@@ -1,0 +1,73 @@
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from funding_statement_extractor.exceptions import ConfigurationError
+
+
+@dataclass
+class InputSettings:
+    path: Path
+    input_format: Optional[str] = None
+    text_column: Optional[str] = None
+    id_column: Optional[str] = None
+    batch_size: int = 64
+
+
+@dataclass
+class OutputSettings:
+    output_path: Path
+    checkpoint_path: Path
+
+
+@dataclass
+class ExtractionSettings:
+    retrieval_model: str = "lightonai/GTE-ModernColBERT-v1"
+    threshold: float = 28.0
+    top_k: int = 5
+    semantic_batch_size: int = 32
+
+
+@dataclass
+class ProcessingSettings:
+    normalize: bool = False
+    enable_pattern_rescue: bool = False
+    enable_post_filter: bool = False
+
+
+@dataclass
+class RuntimeSettings:
+    batch_size: int = 10
+    workers: Optional[int] = None
+    resume: bool = False
+    force: bool = False
+    verbose: bool = False
+
+
+@dataclass
+class ConfigPaths:
+    queries_file: Optional[Path] = None
+    config_dir: Optional[Path] = None
+    patterns_file: Optional[Path] = None
+
+
+@dataclass
+class ApplicationConfig:
+    input: InputSettings
+    output: OutputSettings
+    extraction: ExtractionSettings
+    processing: ProcessingSettings
+    runtime: RuntimeSettings
+    config_paths: ConfigPaths
+
+    def validate(self) -> None:
+        if not self.input.path.exists():
+            raise ConfigurationError(f"Input path {self.input.path} does not exist.")
+
+        if self.input.input_format and self.input.input_format not in {"markdown", "parquet", "jsonl"}:
+            raise ConfigurationError("input_format must be one of: markdown, parquet, jsonl.")
+
+        if self.extraction.top_k < 1:
+            raise ConfigurationError("top_k must be at least 1.")
+        if self.extraction.threshold < 0:
+            raise ConfigurationError("threshold must be non-negative.")
