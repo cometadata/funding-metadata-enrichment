@@ -1,0 +1,75 @@
+{
+  "benchmark_config": {
+    "dataset": "cometadata/preprint-funding-pdfs-md-conversion",
+    "split": "train",
+    "threshold": 0.8,
+    "funder_threshold": 0.8,
+    "id_match_mode": "normalized",
+    "mode": "hf-predictions",
+    "timestamp": "2026-03-20T13:09:37.277481"
+  },
+  "summary": {
+    "total_gold_documents": 1316,
+    "total_predicted_documents": 1316,
+    "matched_documents": 1316,
+    "unmatched_gold": 0,
+    "unmatched_predictions": 0
+  },
+  "aggregate_metrics": {
+    "statement": {
+      "gold_count": 1316,
+      "pred_count": 0,
+      "gold_matched": 0,
+      "pred_matched": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "f0_5": 0.0,
+      "f1_5": 0.0
+    },
+    "funder": {
+      "gold_count": 3395,
+      "pred_count": 3766,
+      "gold_matched": 3184,
+      "pred_matched": 3184,
+      "precision": 0.8455,
+      "recall": 0.9378,
+      "f1": 0.8893,
+      "f0_5": 0.8625,
+      "f1_5": 0.9073
+    },
+    "award_id": {
+      "gold_count": 3452,
+      "pred_count": 3510,
+      "gold_matched": 2812,
+      "pred_matched": 2812,
+      "precision": 0.8011,
+      "recall": 0.8146,
+      "f1": 0.8078,
+      "f0_5": 0.8038,
+      "f1_5": 0.8104
+    },
+    "funding_scheme": {
+      "gold_count": 1345,
+      "pred_count": 229,
+      "gold_matched": 146,
+      "pred_matched": 146,
+      "precision": 0.6376,
+      "recall": 0.1086,
+      "f1": 0.1855,
+      "f0_5": 0.3229,
+      "f1_5": 0.1458
+    },
+    "award_title": {
+      "gold_count": 181,
+      "pred_count": 290,
+      "gold_matched": 72,
+      "pred_matched": 72,
+      "precision": 0.2483,
+      "recall": 0.3978,
+      "f1": 0.3057,
+      "f0_5": 0.2685,
+      "f1_5": 0.3356
+    }
+  }
+}

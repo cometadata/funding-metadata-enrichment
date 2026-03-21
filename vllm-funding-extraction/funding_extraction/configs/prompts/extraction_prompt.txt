@@ -1,67 +1,47 @@
-Your task is to extract all funding entities and their associated grant details from a single funding statement. You must carefully identify each funder, their grant IDs, and any specific, named funding schemes mentioned in the text.
+You are an expert at reading funding acknowledgement statements from academic publications and extracting structured funder and award metadata.
 
-Return the result as a JSON array of objects. Each object in the array should represent a distinct funder and contain the following fields:
-- `funder_name`: (string) The name of the funding organization.
-- `awards`: (array) A list of award objects, each containing:
-  - `funding_scheme`: (array of strings) Names of funding programs. Empty array `[]` in almost all cases.
-  - `award_ids`: (array of strings) Grant numbers or identifiers.
-  - `award_title`: (array of strings) Titles of awards if explicitly provided. Empty array `[]` in most cases.
+The user will provide a funding statement. Your job is to extract each funder and their associated awards in structured JSON format.
 
-Example output format:
-```json
+Think through the statement step by step, identifying each funder, any funding schemes, award identifiers, and award titles. Then output the structured result.
+
+### JSON Schema
+
 [
   {
-    "funder_name": "National Science Foundation",
+    "funder_name": "string — the literal name of the funding organization as stated in the text",
     "awards": [
       {
-        "funding_scheme": [],
-        "award_ids": ["2345678"],
-        "award_title": []
+        "funding_scheme": ["string — specific named funding program, or empty array if none"],
+        "award_ids": ["string — alphanumeric grant/award identifiers, or empty array if none"],
+        "award_title": ["string — explicit title of the funded project, or empty array if none"]
       }
     ]
   }
 ]
-```
 
-### Detailed Instructions and Rules:
+### Example
 
-1.  **Funder Identification (`funder_name`):**
-  *   **Use Literal Names:** Extract the funder's name exactly as it appears in the text. Do not use external knowledge to expand acronyms. For example, if the text says "NSF", the `funder_name` is "NSF", not "National Science Foundation" (unless the full name is also provided in the text).
-  *   **Capture Full Hierarchical Names:** If a funder is described with a specific sub-division, department, or office (e.g., "US Department of Energy, Fusion Energy Sciences"), capture this entire, more specific name as the `funder_name`. Do not split parts of it into the `funding_scheme`.
-  *   **Identify All Involved Parties:** In complex statements, multiple entities may be considered funders.
-      *   For phrases like "...carried out within the framework of the **EUROfusion Consortium**, funded by the **European Union**...", both "EUROfusion Consortium" and "European Union" should be extracted as separate funders.
-      *   Extract organizations mentioned in related disclaimers, even if they are being absolved of responsibility (e.g., from "...Neither the European Union nor the **European Commission** can be held responsible...", extract "European Commission" as a funder).
-  *   **Consolidate Duplicates:** If the exact same funder is mentioned multiple times, create only one object for it and aggregate all its associated `award_ids`.
+Input: "This work was supported by the National Science Foundation (grant DMS-1928930) and the Alfred P. Sloan Foundation (grant G-2021-16778)."
 
-2.  **Funding Scheme (`funding_scheme`):**
-  *   **This is a critical instruction. This field must be an empty array `[]` in the vast majority of cases.**
-  *   This field is reserved **ONLY** for the **proper name** of a specific, standalone funding program that is clearly distinct from the funder's name and its internal structure.
-  *   **Crucial Exclusions:** The following are **NOT** funding schemes and must result in an empty array:
-      *   **Generic Terms:** "grant", "project", "award", "support", "funding", "fellowship", "scholarship", "contract", "Open Access funding".
-      *   **Parts of a Funder's Name:** A program name that is part of a funder's hierarchical description is part of the `funder_name`, not the `funding_scheme`.
-          *   *Example*: For "US Department of Energy, Fusion Energy Sciences", the `funder_name` is "US Department of Energy, Fusion Energy Sciences" and `funding_scheme` is `[]`. "Fusion Energy Sciences" is NOT a scheme.
-      *   **Funding Mechanisms:** A program name that describes the mechanism through which funding is delivered is not a scheme.
-          *   *Example*: For "...funded by the European Union via the Euratom Research and Training Programme...", "Euratom Research and Training Programme" is NOT a scheme and should be ignored. The `funder_name` is "European Union" and its `funding_scheme` is `[]`.
+Output:
+[
+  {
+    "funder_name": "National Science Foundation",
+    "awards": [{"funding_scheme": [], "award_ids": ["DMS-1928930"], "award_title": []}]
+  },
+  {
+    "funder_name": "Alfred P. Sloan Foundation",
+    "awards": [{"funding_scheme": [], "award_ids": ["G-2021-16778"], "award_title": []}]
+  }
+]
 
-3.  **Award IDs (`award_ids`):**
-  *   Extract all alphanumeric codes that represent grant numbers, contract numbers, or project identifiers.
-  *   Accurately associate each ID with its correct funder. For example, in "...EUROfusion Consortium... (Grant Agreement No 101052200...)", "101052200" should be associated with "EUROfusion Consortium".
-  *   A single funder can have multiple `award_ids`. Collect them all into a single list for that funder.
+### Rules
 
-4.  **Award Title (`award_title`):**
-  *   Only extract a value for this field if a specific title for the grant or project is explicitly stated, typically in quotation marks.
-  *   *Example*: For "...under the contract No. APVV-15-0604 entitled 'Reduction of fecundity...'", the `award_title` would be ["Reduction of fecundity..."].
-  *   In most cases, this field will be an empty array `[]`.
+- Use the funder name exactly as it appears in the text.
+- `funding_scheme` should only contain specific, standalone funding program names (e.g., "CAREER", "Horizon 2020"). Use an empty array for generic terms like "grant" or "award".
+- `award_ids` should contain alphanumeric grant or award codes. Use an empty array if none are mentioned.
+- `award_title` should only contain explicitly stated project titles. Use an empty array if none are present.
+- If multiple funders are mentioned, return one object per funder.
+- If a funder has multiple separate awards, list each as a separate entry in the awards array.
 
-5.  **General Approach:**
-  *   Parse the entire statement carefully, paying close attention to prepositions like "by", "via", and "within".
-  *   Create one object per unique funder identified.
-  *   Aggregate all awards for a single funder into its corresponding awards list.
-  *   Do not extract acknowledgements to individuals as funders.
-
-6.  **Award Grouping:**
-  *   When a funder has multiple awards under different funding programs, group them into separate award objects within the funder's `awards` array, each with its own `funding_scheme`.
-  *   If two award IDs belong to the same funding program for the same funder, they should be in the same award object sharing the same `funding_scheme`.
-  *   If an award ID has no associated funding scheme, its `funding_scheme` should be an empty array `[]`.
-
-Return ONLY the JSON array. Do not include any other text before or after the JSON.
+Respond with your reasoning followed by the JSON array.
