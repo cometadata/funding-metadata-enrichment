@@ -77,17 +77,14 @@ class VLLMClient:
         message = response.choices[0].message
         reasoning = getattr(message, "reasoning_content", None)
 
-        # The standard OpenAI client doesn't deserialize vLLM's
-        # reasoning_content field. Fall back to the raw model_extra dicts.
+        # The standard OpenAI client drops vLLM's reasoning_content during
+        # Pydantic parsing. Extract it from the full response dict instead.
         if reasoning is None:
-            # Try on the message object first, then on the choice object
-            msg_extra = getattr(message, "model_extra", None) or {}
-            reasoning = msg_extra.get("reasoning_content")
-        if reasoning is None:
-            choice_extra = getattr(response.choices[0], "model_extra", None) or {}
-            raw_msg = choice_extra.get("message", {})
-            if isinstance(raw_msg, dict):
-                reasoning = raw_msg.get("reasoning_content")
+            try:
+                raw = response.model_dump()
+                reasoning = raw["choices"][0]["message"].get("reasoning_content")
+            except (KeyError, IndexError, TypeError):
+                pass
 
         return ChatResponse(
             content=message.content,
