@@ -90,6 +90,15 @@ class ExtractionService:
                     continue
 
                 content = response.content
+                logger.debug(
+                    "Raw response — content type=%s len=%s, reasoning type=%s len=%s, content[:200]=%r, reasoning[:200]=%r",
+                    type(content).__name__,
+                    len(content) if content else 0,
+                    type(response.reasoning).__name__ if response.reasoning else "None",
+                    len(response.reasoning) if response.reasoning else 0,
+                    content[:200] if content else content,
+                    response.reasoning[:200] if response.reasoning else None,
+                )
                 if content is None:
                     content = ""
                 if self._config.sampling.enable_thinking:
