@@ -4,9 +4,11 @@ set -euo pipefail
 # Launch funding extraction benchmark as a HuggingFace Job.
 #
 # Usage:
-#   # Entity extraction (GPU)
+#   # Entity extraction — test split only (default)
 #   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b.yaml --flavor a100-large
-#   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b.yaml --guided-decoding --flavor a100-large
+#
+#   # Entity extraction — both splits
+#   ./launch_benchmark.sh --stages entities --vllm-config qwen3-8b.yaml --split both --flavor a100-large
 #
 #   # Metrics evaluation (CPU)
 #   ./launch_benchmark.sh --stages metrics --config-name qwen3-8b-entities-non-thinking
@@ -24,6 +26,7 @@ EXTRACTION_PASSES=""
 GPU_MEM_UTIL=""
 MAX_MODEL_LEN=""
 GUIDED_DECODING=""
+SPLIT="test"
 STAGES=()
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         --gpu-memory-utilization) GPU_MEM_UTIL="$2"; shift 2 ;;
         --max-model-len)      MAX_MODEL_LEN="$2"; shift 2 ;;
         --guided-decoding)    GUIDED_DECODING="true"; shift ;;
+        --split)              SPLIT="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -61,6 +65,7 @@ for STAGE in "${STAGES[@]}"; do
             SCRIPT="${SCRIPT_DIR}/run_benchmark_entities.py"
             SCRIPT_ARGS="--vllm-config ${VLLM_CONFIG}"
 
+            SCRIPT_ARGS+=" --split ${SPLIT}"
             [[ -n "$WORKERS" ]] && SCRIPT_ARGS+=" --workers ${WORKERS}"
             [[ -n "$CONFIG_NAME" ]] && SCRIPT_ARGS+=" --config-name ${CONFIG_NAME}"
             [[ -n "$MAX_TOKENS" ]] && SCRIPT_ARGS+=" --max-tokens ${MAX_TOKENS}"
@@ -72,6 +77,7 @@ for STAGE in "${STAGES[@]}"; do
 
             echo "Launching entities benchmark job:"
             echo "  Config: ${VLLM_CONFIG}"
+            echo "  Split: ${SPLIT}"
             echo "  Flavor: ${FLAVOR}"
             [[ -n "$WORKERS" ]] && echo "  Workers: ${WORKERS}"
             [[ -n "$MAX_TOKENS" ]] && echo "  Max tokens: ${MAX_TOKENS}"
@@ -99,7 +105,7 @@ for STAGE in "${STAGES[@]}"; do
             SCRIPT="${SCRIPT_DIR}/run_benchmark_metrics.py"
             SCRIPT_ARGS="--hf-predictions cometadata/funding-extraction-harness-benchmark"
             SCRIPT_ARGS+=" --hf-config ${CONFIG_NAME}"
-            SCRIPT_ARGS+=" --split both"
+            SCRIPT_ARGS+=" --split ${SPLIT}"
             SCRIPT_ARGS+=" --push-to-hub cometadata/funding-extraction-harness-benchmark"
             SCRIPT_ARGS+=" --push-config ${CONFIG_NAME}-metrics"
 

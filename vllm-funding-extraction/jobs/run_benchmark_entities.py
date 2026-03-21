@@ -94,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         help="Output dataset on HuggingFace",
     )
     parser.add_argument(
+        "--split",
+        choices=["train", "test", "both"],
+        default="test",
+        help="Which split(s) to run: train, test, or both (default: test)",
+    )
+    parser.add_argument(
         "--max-samples",
         type=int,
         default=None,
@@ -158,11 +164,12 @@ def parse_args() -> argparse.Namespace:
 def load_gold_statements(
     source_dataset: str,
     max_samples: Optional[int],
+    splits: tuple[str, ...] = ("test",),
 ) -> dict[str, list[dict[str, Any]]]:
     """Load gold funding statements from the benchmark dataset."""
     results_by_split: dict[str, list[dict[str, Any]]] = {}
 
-    for split in ("train", "test"):
+    for split in splits:
         logger.info("Loading gold statements [%s]", split)
         ds = load_dataset(source_dataset, split=split)
         split_results: list[dict[str, Any]] = []
@@ -475,9 +482,11 @@ def main() -> None:
     t0 = time.time()
 
     logger.info("=== Loading gold statements ===")
+    splits = ("train", "test") if args.split == "both" else (args.split,)
     statements = load_gold_statements(
         source_dataset=args.source_dataset,
         max_samples=args.max_samples,
+        splits=splits,
     )
 
     vllm_config_path, model_id, config_data = load_and_patch_config(args)
