@@ -1,12 +1,24 @@
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _coerce_to_list(v: object) -> object:
+    """Wrap a bare string (or None) into a list so Pydantic can validate it."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v]
+    return v
+
+
+_StrList = Annotated[list[str], BeforeValidator(_coerce_to_list)]
 
 
 class Award(BaseModel):
-    funding_scheme: list[str] = Field(default_factory=list, description="Names of funding programs or schemes")
-    award_ids: list[str] = Field(default_factory=list, description="List of grant/award identifiers")
-    award_title: list[str] = Field(default_factory=list, description="Titles of awards if provided")
+    funding_scheme: _StrList = Field(default_factory=list, description="Names of funding programs or schemes")
+    award_ids: _StrList = Field(default_factory=list, description="List of grant/award identifiers")
+    award_title: _StrList = Field(default_factory=list, description="Titles of awards if provided")
 
 
 class FunderEntity(BaseModel):

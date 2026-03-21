@@ -154,7 +154,6 @@ cross_configs = [
     "Q3-8B\nglm-distil Think",
     "Q3-8B\nep2p1 twostage",
     "Q3-8B\nep2p1 two. Think",
-    "Q3-8B\n397B-distil-3ep",
     "Q3.5-9B\nbase",
     "Q3.5-9B\nbase Think",
     "Q3.5-9B\nglm-distil",
@@ -162,20 +161,20 @@ cross_configs = [
 ]
 
 cross_data = {
-    "Funder F1":         [0.847, 0.872, 0.860, 0.881, 0.886, 0.879, 0.810, 0.871, 0.863, 0.874, 0.885],
-    "Award ID F1":       [0.747, 0.787, 0.753, 0.787, 0.759, 0.769, 0.709, 0.811, 0.803, 0.800, 0.803],
-    "Funding Scheme F1": [0.164, 0.306, 0.290, 0.383, 0.402, 0.379, 0.157, 0.152, 0.115, 0.230, 0.345],
-    "Award Title F1":    [0.124, 0.205, 0.105, 0.164, 0.085, 0.190, 0.065, 0.438, 0.316, 0.337, 0.481],
+    "Funder F1":         [0.847, 0.872, 0.860, 0.881, 0.886, 0.879, 0.871, 0.863, 0.874, 0.885],
+    "Award ID F1":       [0.747, 0.787, 0.753, 0.787, 0.759, 0.769, 0.811, 0.803, 0.800, 0.803],
+    "Funding Scheme F1": [0.164, 0.306, 0.290, 0.383, 0.402, 0.379, 0.152, 0.115, 0.230, 0.345],
+    "Award Title F1":    [0.124, 0.205, 0.105, 0.164, 0.085, 0.190, 0.438, 0.316, 0.337, 0.481],
 }
 
 fig, ax = plt.subplots(figsize=(20, 9))
 
 # Background shading for model families
-ax.axvspan(-0.5, 6.5, alpha=0.06, color="#2196F3", zorder=0)
-ax.axvspan(6.5, 10.5, alpha=0.06, color="#FF9800", zorder=0)
-ax.text(3.0, 0.97, "Qwen3-8B", ha="center", fontsize=13, fontweight="bold",
+ax.axvspan(-0.5, 5.5, alpha=0.06, color="#2196F3", zorder=0)
+ax.axvspan(5.5, 9.5, alpha=0.06, color="#FF9800", zorder=0)
+ax.text(2.5, 0.97, "Qwen3-8B", ha="center", fontsize=13, fontweight="bold",
         color="#1565C0", alpha=0.5, transform=ax.get_xaxis_transform())
-ax.text(8.5, 0.97, "Qwen3.5-9B", ha="center", fontsize=13, fontweight="bold",
+ax.text(7.5, 0.97, "Qwen3.5-9B", ha="center", fontsize=13, fontweight="bold",
         color="#E65100", alpha=0.5, transform=ax.get_xaxis_transform())
 
 # Think variant shading

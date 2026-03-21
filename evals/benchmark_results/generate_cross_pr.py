@@ -10,7 +10,6 @@ cross_configs = [
     "Q3-8B\nglm-distil Think",
     "Q3-8B\nep2p1 twostage",
     "Q3-8B\nep2p1 two. Think",
-    "Q3-8B\n397B-distil-3ep",
     "Q3.5-9B\nbase",
     "Q3.5-9B\nbase Think",
     "Q3.5-9B\nglm-distil",
@@ -18,17 +17,17 @@ cross_configs = [
 ]
 
 cross_precision = {
-    "Funder":         [0.767, 0.844, 0.827, 0.855, 0.847, 0.847, 0.795, 0.822, 0.863, 0.823, 0.859],
-    "Award ID":       [0.722, 0.776, 0.740, 0.784, 0.756, 0.771, 0.762, 0.789, 0.817, 0.782, 0.799],
-    "Funding Scheme": [0.507, 0.531, 0.560, 0.598, 0.546, 0.525, 0.628, 0.833, 0.917, 0.658, 0.701],
-    "Award Title":    [0.545, 0.387, 0.214, 0.278, 0.500, 0.526, 0.500, 0.446, 0.643, 0.300, 0.681],
+    "Funder":         [0.767, 0.844, 0.827, 0.855, 0.847, 0.847, 0.822, 0.863, 0.823, 0.859],
+    "Award ID":       [0.722, 0.776, 0.740, 0.784, 0.756, 0.771, 0.789, 0.817, 0.782, 0.799],
+    "Funding Scheme": [0.507, 0.531, 0.560, 0.598, 0.546, 0.525, 0.833, 0.917, 0.658, 0.701],
+    "Award Title":    [0.545, 0.387, 0.214, 0.278, 0.500, 0.526, 0.446, 0.643, 0.300, 0.681],
 }
 
 cross_recall = {
-    "Funder":         [0.944, 0.903, 0.895, 0.909, 0.930, 0.914, 0.825, 0.927, 0.863, 0.931, 0.914],
-    "Award ID":       [0.775, 0.799, 0.766, 0.790, 0.763, 0.768, 0.664, 0.834, 0.789, 0.820, 0.807],
-    "Funding Scheme": [0.098, 0.215, 0.196, 0.282, 0.318, 0.296, 0.089, 0.084, 0.062, 0.140, 0.229],
-    "Award Title":    [0.070, 0.140, 0.070, 0.116, 0.047, 0.116, 0.035, 0.430, 0.209, 0.384, 0.372],
+    "Funder":         [0.944, 0.903, 0.895, 0.909, 0.930, 0.914, 0.927, 0.863, 0.931, 0.914],
+    "Award ID":       [0.775, 0.799, 0.766, 0.790, 0.763, 0.768, 0.834, 0.789, 0.820, 0.807],
+    "Funding Scheme": [0.098, 0.215, 0.196, 0.282, 0.318, 0.296, 0.084, 0.062, 0.140, 0.229],
+    "Award Title":    [0.070, 0.140, 0.070, 0.116, 0.047, 0.116, 0.430, 0.209, 0.384, 0.372],
 }
 
 line_styles = {
@@ -43,11 +42,11 @@ def make_cross_chart(data, metric_label, filename, y_range):
     fig, ax = plt.subplots(figsize=(20, 9))
 
     # Background shading for model families
-    ax.axvspan(-0.5, 6.5, alpha=0.06, color="#2196F3", zorder=0)
-    ax.axvspan(6.5, 10.5, alpha=0.06, color="#FF9800", zorder=0)
-    ax.text(3.0, 0.97, "Qwen3-8B", ha="center", fontsize=13, fontweight="bold",
+    ax.axvspan(-0.5, 5.5, alpha=0.06, color="#2196F3", zorder=0)
+    ax.axvspan(5.5, 9.5, alpha=0.06, color="#FF9800", zorder=0)
+    ax.text(2.5, 0.97, "Qwen3-8B", ha="center", fontsize=13, fontweight="bold",
             color="#1565C0", alpha=0.5, transform=ax.get_xaxis_transform())
-    ax.text(8.5, 0.97, "Qwen3.5-9B", ha="center", fontsize=13, fontweight="bold",
+    ax.text(7.5, 0.97, "Qwen3.5-9B", ha="center", fontsize=13, fontweight="bold",
             color="#E65100", alpha=0.5, transform=ax.get_xaxis_transform())
 
     # Think variant shading
