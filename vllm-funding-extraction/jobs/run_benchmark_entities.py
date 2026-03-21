@@ -157,6 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-level",
         default="INFO",
+        type=str.upper,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)",
     )
