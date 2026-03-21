@@ -67,6 +67,32 @@ class TestVLLMClient:
         assert call_kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
 
     @patch("funding_extraction.client.openai.OpenAI")
+    def test_chat_with_thinking_budget(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _mock_response("output", reasoning_content="thought")
+
+        config = _make_config(sampling=VLLMSamplingConfig(enable_thinking=True, thinking_budget=1024))
+        client = VLLMClient(config)
+        client.chat([{"role": "user", "content": "test"}])
+
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs["extra_body"]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+
+    @patch("funding_extraction.client.openai.OpenAI")
+    def test_chat_thinking_no_budget_omits_thinking_field(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _mock_response("output")
+
+        config = _make_config(sampling=VLLMSamplingConfig(enable_thinking=True, thinking_budget=None))
+        client = VLLMClient(config)
+        client.chat([{"role": "user", "content": "test"}])
+
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert "thinking" not in call_kwargs["extra_body"]
+
+    @patch("funding_extraction.client.openai.OpenAI")
     def test_chat_with_guided_json(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -86,7 +112,9 @@ class TestVLLMClient:
         mock_openai_cls.return_value = mock_client
         mock_client.chat.completions.create.return_value = _mock_response("[]")
 
-        config = _make_config(sampling=VLLMSamplingConfig(enable_thinking=False))
+        config = _make_config(sampling=VLLMSamplingConfig(
+            enable_thinking=False, top_k=0, min_p=0.0, repetition_penalty=1.0,
+        ))
         client = VLLMClient(config)
         client.chat([{"role": "user", "content": "test"}])
 
@@ -108,19 +136,68 @@ class TestVLLMClient:
         assert call_kwargs["model"] == "my-adapter"
 
     @patch("funding_extraction.client.openai.OpenAI")
-    def test_sampling_params_passed(self, mock_openai_cls):
+    def test_all_sampling_params_passed(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
         mock_client.chat.completions.create.return_value = _mock_response("[]")
 
-        config = _make_config(sampling=VLLMSamplingConfig(temperature=0.3, top_p=0.9, max_tokens=1024))
+        config = _make_config(sampling=VLLMSamplingConfig(
+            temperature=0.3,
+            top_p=0.9,
+            top_k=50,
+            min_p=0.05,
+            max_tokens=1024,
+            presence_penalty=1.5,
+            repetition_penalty=1.2,
+        ))
         client = VLLMClient(config)
         client.chat([{"role": "user", "content": "test"}])
 
         call_kwargs = mock_client.chat.completions.create.call_args[1]
+        # Direct API params
         assert call_kwargs["temperature"] == 0.3
         assert call_kwargs["top_p"] == 0.9
         assert call_kwargs["max_tokens"] == 1024
+        assert call_kwargs["presence_penalty"] == 1.5
+        # extra_body params (vLLM extensions)
+        assert call_kwargs["extra_body"]["top_k"] == 50
+        assert call_kwargs["extra_body"]["min_p"] == 0.05
+        assert call_kwargs["extra_body"]["repetition_penalty"] == 1.2
+
+    @patch("funding_extraction.client.openai.OpenAI")
+    def test_default_sampling_omits_extra_body_params(self, mock_openai_cls):
+        """Default top_k=20 is sent, but min_p=0 and repetition_penalty=1.0 are omitted."""
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _mock_response("[]")
+
+        config = _make_config(sampling=VLLMSamplingConfig(
+            top_k=20, min_p=0.0, repetition_penalty=1.0,
+        ))
+        client = VLLMClient(config)
+        client.chat([{"role": "user", "content": "test"}])
+
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        extra_body = call_kwargs.get("extra_body")
+        # top_k=20 > 0, so it should be sent
+        assert extra_body["top_k"] == 20
+        # min_p=0 and repetition_penalty=1.0 are no-ops, should be omitted
+        assert "min_p" not in extra_body
+        assert "repetition_penalty" not in extra_body
+
+    @patch("funding_extraction.client.openai.OpenAI")
+    def test_top_k_zero_omitted(self, mock_openai_cls):
+        """top_k=0 means disabled, should not be sent."""
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = _mock_response("[]")
+
+        config = _make_config(sampling=VLLMSamplingConfig(top_k=0))
+        client = VLLMClient(config)
+        client.chat([{"role": "user", "content": "test"}])
+
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("extra_body") is None
 
     @patch("funding_extraction.client.openai.OpenAI")
     def test_dummy_api_key_when_none(self, mock_openai_cls):

@@ -42,15 +42,29 @@ class VLLMClient:
         extra_body: dict = {}
         if self._config.sampling.enable_thinking:
             extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+            if self._config.sampling.thinking_budget is not None:
+                extra_body["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": self._config.sampling.thinking_budget,
+                }
         if guided_json:
             extra_body["guided_json"] = guided_json
+
+        sampling = self._config.sampling
+        if sampling.top_k > 0:
+            extra_body["top_k"] = sampling.top_k
+        if sampling.min_p > 0:
+            extra_body["min_p"] = sampling.min_p
+        if sampling.repetition_penalty != 1.0:
+            extra_body["repetition_penalty"] = sampling.repetition_penalty
 
         response = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
-            temperature=self._config.sampling.temperature,
-            top_p=self._config.sampling.top_p,
-            max_tokens=self._config.sampling.max_tokens,
+            temperature=sampling.temperature,
+            top_p=sampling.top_p,
+            max_tokens=sampling.max_tokens,
+            presence_penalty=sampling.presence_penalty,
             extra_body=extra_body or None,
         )
 

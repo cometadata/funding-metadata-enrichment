@@ -25,13 +25,13 @@ sampling:
   temperature: 0.6
   top_p: 0.95
   top_k: 20
-  max_tokens: 16384
+  max_tokens: 4096
   enable_thinking: true
-  thinking_budget: 4096
+  thinking_budget: 1024
   presence_penalty: 1.5
   extraction_passes: 1
   guided_decoding: false
 
 benchmark:
   config_name: "funding-parsing-lora-Qwen3_8B_Qwen3_5_397B_A17B-distil-3ep"
-  workers: 64
+  workers: 32
