@@ -26,6 +26,7 @@ EXTRACTION_PASSES=""
 GPU_MEM_UTIL=""
 MAX_MODEL_LEN=""
 GUIDED_DECODING=""
+LOG_LEVEL=""
 SPLIT="test"
 STAGES=()
 
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --gpu-memory-utilization) GPU_MEM_UTIL="$2"; shift 2 ;;
         --max-model-len)      MAX_MODEL_LEN="$2"; shift 2 ;;
         --guided-decoding)    GUIDED_DECODING="true"; shift ;;
+        --log-level)          LOG_LEVEL="$2"; shift 2 ;;
         --split)              SPLIT="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
@@ -74,6 +76,7 @@ for STAGE in "${STAGES[@]}"; do
             [[ -n "$GPU_MEM_UTIL" ]] && SCRIPT_ARGS+=" --gpu-memory-utilization ${GPU_MEM_UTIL}"
             [[ -n "$MAX_MODEL_LEN" ]] && SCRIPT_ARGS+=" --max-model-len ${MAX_MODEL_LEN}"
             [[ -n "$GUIDED_DECODING" ]] && SCRIPT_ARGS+=" --guided-decoding"
+            [[ -n "$LOG_LEVEL" ]] && SCRIPT_ARGS+=" --log-level ${LOG_LEVEL}"
 
             echo "Launching entities benchmark job:"
             echo "  Config: ${VLLM_CONFIG}"

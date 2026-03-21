@@ -51,10 +51,6 @@ from huggingface_hub import login
 
 from funding_extraction import ExtractionService, load_vllm_config
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -157,6 +153,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=None,
         help="Enable guided JSON decoding",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
     )
     return parser.parse_args()
 
@@ -467,6 +469,11 @@ def push_entities(
 
 def main() -> None:
     args = parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
