@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 
+import httpx
 import openai
 
 from funding_extraction.config import VLLMConfig
@@ -18,9 +19,14 @@ class VLLMClient:
     """Thin wrapper around OpenAI client for talking to a vLLM server."""
 
     def __init__(self, config: VLLMConfig) -> None:
+        timeout = httpx.Timeout(
+            timeout=config.server.timeout or 300,
+            connect=10.0,
+        )
         self._client = openai.OpenAI(
             base_url=config.server.url,
             api_key=config.server.api_key or "dummy-key",
+            timeout=timeout,
         )
         self._model = config.lora.name or config.model
         self._config = config
@@ -70,6 +76,18 @@ class VLLMClient:
 
         message = response.choices[0].message
         reasoning = getattr(message, "reasoning_content", None)
+
+        # The standard OpenAI client doesn't deserialize vLLM's
+        # reasoning_content field. Fall back to the raw model_extra dicts.
+        if reasoning is None:
+            # Try on the message object first, then on the choice object
+            msg_extra = getattr(message, "model_extra", None) or {}
+            reasoning = msg_extra.get("reasoning_content")
+        if reasoning is None:
+            choice_extra = getattr(response.choices[0], "model_extra", None) or {}
+            raw_msg = choice_extra.get("message", {})
+            if isinstance(raw_msg, dict):
+                reasoning = raw_msg.get("reasoning_content")
 
         return ChatResponse(
             content=message.content,
