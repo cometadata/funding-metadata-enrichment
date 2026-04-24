@@ -1,0 +1,22 @@
+[package]
+name = "funding-prefilter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+fancy-regex = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+rayon = "1"
+walkdir = "2"
+num_cpus = "1"
+anyhow = "1"
+thiserror = "2"
+arrow = "55"
+arrow-array = "55"
+arrow-schema = "55"
+parquet = { version = "55", features = ["arrow", "snap"] }
+chrono = "0.4"
+once_cell = "1"
