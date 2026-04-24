@@ -4,7 +4,9 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 from typing import Pattern
 
-from pylate import models, rank
+import torch
+from pylate import models
+from pylate.scores import colbert_scores
 
 from funding_statement_extractor.config.loader import load_funding_patterns
 from funding_statement_extractor.statements.models import FundingStatement
@@ -13,6 +15,28 @@ from funding_statement_extractor.statements.models import FundingStatement
 def _split_into_paragraphs(text: str) -> List[str]:
     paragraphs = re.split(r"\n\s*\n", text)
     return [p.strip() for p in paragraphs if p.strip()]
+
+
+_FUNDING_PREFILTER_REGEX = re.compile(
+    r"\b(fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def _prefilter_paragraphs(paragraphs: List[str]) -> Tuple[List[str], List[int]]:
+    if not paragraphs:
+        return [], []
+    keep = [False] * len(paragraphs)
+    for i, p in enumerate(paragraphs):
+        if _FUNDING_PREFILTER_REGEX.search(p):
+            keep[i] = True
+            if i > 0:
+                keep[i - 1] = True
+            if i + 1 < len(paragraphs):
+                keep[i + 1] = True
+    kept = [paragraphs[i] for i in range(len(paragraphs)) if keep[i]]
+    indices = [i for i in range(len(paragraphs)) if keep[i]]
+    return kept, indices
 
 
 class SemanticExtractionService:
@@ -24,6 +48,7 @@ class SemanticExtractionService:
         self._pattern_cache_lock = threading.Lock()
 
         self._query_embeddings_cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Dict[str, Any]] = {}
+        self._query_tensor_cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...], str], Tuple[torch.Tensor, List[str]]] = {}
         self._query_cache_lock = threading.Lock()
 
     def _get_model(self, model_name: str) -> models.ColBERT:
@@ -79,6 +104,56 @@ class SemanticExtractionService:
         with self._query_cache_lock:
             self._query_embeddings_cache[key] = embeddings
         return embeddings
+
+    def _prepare_padded_documents(self, documents_embeddings: Any, device: Any) -> torch.Tensor:
+        doc_tensors = [torch.as_tensor(e) for e in documents_embeddings]
+        padded = torch.nn.utils.rnn.pad_sequence(
+            doc_tensors, batch_first=True, padding_value=0
+        )
+        return padded.to(device)
+
+    def _get_query_embeddings_tensor(
+        self,
+        model_name: str,
+        queries: Dict[str, str],
+        model: models.ColBERT,
+        device: Any,
+    ) -> Tuple[torch.Tensor, List[str]]:
+        numpy_map = self._get_query_embeddings(model_name, queries, model)
+        cache_key = (model_name, tuple(sorted(queries.items())), str(device))
+        with self._query_cache_lock:
+            cached = self._query_tensor_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        ordered_names = list(queries.keys())
+        q_tensors: List[torch.Tensor] = []
+        for name in ordered_names:
+            emb = numpy_map[name]
+            if isinstance(emb, list) and len(emb) == 1:
+                emb = emb[0]
+            t = torch.as_tensor(emb)
+            if t.ndim == 3 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            q_tensors.append(t)
+        padded = torch.nn.utils.rnn.pad_sequence(
+            q_tensors, batch_first=True, padding_value=0
+        ).to(device)
+
+        result = (padded, ordered_names)
+        with self._query_cache_lock:
+            self._query_tensor_cache[cache_key] = result
+        return result
+
+    def _score_all_queries(
+        self,
+        padded_queries: torch.Tensor,
+        padded_docs: torch.Tensor,
+    ) -> torch.Tensor:
+        return colbert_scores(
+            queries_embeddings=padded_queries,
+            documents_embeddings=padded_docs,
+        )
 
     @staticmethod
     def _is_likely_funding_statement(
@@ -231,6 +306,7 @@ class SemanticExtractionService:
         batch_size: int = 32,
         patterns_file: Optional[str] = None,
         custom_config_dir: Optional[str] = None,
+        enable_paragraph_prefilter: bool = False,
     ) -> List[FundingStatement]:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         model = self._get_model(model_name)
@@ -246,59 +322,69 @@ class SemanticExtractionService:
         if not paragraphs:
             return []
 
+        if enable_paragraph_prefilter:
+            paragraphs_to_encode, original_indices = _prefilter_paragraphs(paragraphs)
+            if not paragraphs_to_encode:
+                return []
+        else:
+            paragraphs_to_encode = paragraphs
+            original_indices = list(range(len(paragraphs)))
+
         compiled_patterns, negative_patterns = self._get_compiled_patterns(
             patterns_file, custom_config_dir)
         documents_embeddings = model.encode(
-            paragraphs, batch_size=batch_size, is_query=False, show_progress_bar=False)
-        query_embeddings_map = self._get_query_embeddings(
-            model_name, queries, model)
+            paragraphs_to_encode, batch_size=batch_size,
+            is_query=False, show_progress_bar=False,
+        )
+
+        device = next(model.parameters()).device
+
+        padded_docs = self._prepare_padded_documents(documents_embeddings, device)
+        padded_queries, ordered_query_names = self._get_query_embeddings_tensor(
+            model_name, queries, model, device,
+        )
+        all_scores = self._score_all_queries(padded_queries, padded_docs)
+
+        k = min(top_k, all_scores.shape[1])
+        topk_scores, topk_idx = torch.topk(all_scores, k=k, dim=1)
+        topk_scores_cpu = topk_scores.cpu().tolist()
+        topk_idx_cpu = topk_idx.cpu().tolist()
 
         seen_statements = set()
         funding_statements: List[FundingStatement] = []
 
-        for query_name, query_text in queries.items():
-            query_embeddings = query_embeddings_map.get(query_name)
-            if query_embeddings is None:
-                query_embeddings = model.encode(
-                    [query_text],
-                    batch_size=1,
-                    is_query=True,
-                    show_progress_bar=False,
-                )
+        for q_pos, query_name in enumerate(ordered_query_names):
+            for rank_pos in range(k):
+                encoded_idx = topk_idx_cpu[q_pos][rank_pos]
+                score = float(topk_scores_cpu[q_pos][rank_pos])
+                para_id = original_indices[encoded_idx]
+                paragraph = paragraphs[para_id]
 
-            doc_ids = list(range(len(paragraphs)))
-            reranked = rank.rerank(documents_ids=[
-                                   doc_ids], queries_embeddings=query_embeddings, documents_embeddings=[documents_embeddings])
-            if reranked and len(reranked) > 0:
-                top_results = reranked[0][:top_k]
-                for result in top_results:
-                    para_id = result["id"]
-                    score = float(result["score"])
-                    paragraph = paragraphs[para_id]
-
-                    if self._is_likely_funding_statement(paragraph, score, threshold, compiled_patterns, negative_patterns):
-                        if self._should_extract_full_paragraph(paragraph, score):
-                            statement_text = paragraph.strip()
-                        elif len(paragraph) > 1000:
-                            statement_text = self._extract_funding_from_long_paragraph(
-                                paragraph)
+                if self._is_likely_funding_statement(
+                    paragraph, score, threshold, compiled_patterns, negative_patterns
+                ):
+                    if self._should_extract_full_paragraph(paragraph, score):
+                        statement_text = paragraph.strip()
+                    elif len(paragraph) > 1000:
+                        statement_text = self._extract_funding_from_long_paragraph(
+                            paragraph)
+                    else:
+                        funding_sentences = self._extract_funding_sentences(
+                            paragraph)
+                        if funding_sentences:
+                            statement_text = " ".join(funding_sentences)
                         else:
-                            funding_sentences = self._extract_funding_sentences(
-                                paragraph)
-                            if funding_sentences:
-                                statement_text = " ".join(funding_sentences)
-                            else:
-                                continue
+                            continue
 
-                        if statement_text not in seen_statements and len(statement_text) > 20:
-                            seen_statements.add(statement_text)
-                            stmt = FundingStatement(
-                                statement=statement_text,
-                                score=score,
-                                query=query_name,
-                                paragraph_idx=para_id,
-                            )
-                            funding_statements.append(stmt)
+                    if statement_text not in seen_statements and len(statement_text) > 20:
+                        seen_statements.add(statement_text)
+                        stmt = FundingStatement(
+                            statement=statement_text,
+                            score=score,
+                            query=query_name,
+                            paragraph_idx=para_id,
+                        )
+                        funding_statements.append(stmt)
 
         return funding_statements
 
@@ -404,6 +490,7 @@ def extract_funding_statements(
     patterns_file: Optional[str] = None,
     custom_config_dir: Optional[str] = None,
     enable_pattern_rescue: bool = False,
+    enable_paragraph_prefilter: bool = False,
 ) -> List[FundingStatement]:
     statements = _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
         queries=queries,
@@ -415,6 +502,7 @@ def extract_funding_statements(
         batch_size=batch_size,
         patterns_file=patterns_file,
         custom_config_dir=custom_config_dir,
+        enable_paragraph_prefilter=enable_paragraph_prefilter,
     )
 
     if enable_pattern_rescue and content is not None:

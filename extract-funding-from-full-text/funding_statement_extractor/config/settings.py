@@ -34,6 +34,7 @@ class ProcessingSettings:
     skip_extraction: bool = False
     enable_pattern_rescue: bool = False
     enable_post_filter: bool = False
+    enable_paragraph_prefilter: bool = False
 
 
 @dataclass

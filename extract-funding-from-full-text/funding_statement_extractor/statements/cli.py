@@ -67,6 +67,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--top-k", type=int, default=5, help="Number of top paragraphs to analyze per query (default: 5)")
     parser.add_argument("--enable-pattern-rescue", action="store_true", help="Enable pattern-based rescue for statements not in top-k (improves recall)")
     parser.add_argument("--enable-post-filter", action="store_true", help="Enable post-filtering for precision recovery")
+    parser.add_argument("--enable-paragraph-prefilter", action="store_true", help="Pre-filter paragraphs by funding keywords before encoding (~6-9x speedup, may affect recall)")
 
     parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (auto-detected if not specified)")
@@ -103,6 +104,7 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             skip_extraction=args.skip_extraction,
             enable_pattern_rescue=args.enable_pattern_rescue,
             enable_post_filter=args.enable_post_filter,
+            enable_paragraph_prefilter=args.enable_paragraph_prefilter,
         ),
         runtime=RuntimeSettings(
             batch_size=args.batch_size,
@@ -146,6 +148,7 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
         patterns_file=str(config.config_paths.patterns_file) if config.config_paths.patterns_file else None,
         custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
         enable_pattern_rescue=config.processing.enable_pattern_rescue,
+        enable_paragraph_prefilter=config.processing.enable_paragraph_prefilter,
     )
 
     if config.processing.enable_post_filter and statements:

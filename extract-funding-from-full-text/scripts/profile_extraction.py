@@ -68,6 +68,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument("--output", default=None)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--enable-paragraph-prefilter", action="store_true")
     return p.parse_args(argv)
 
 
@@ -144,14 +145,12 @@ def load_or_build_sample(args: argparse.Namespace) -> List[Dict[str, Any]]:
 def install_instrumentation(
     top: PhaseAccumulator, internals: PhaseAccumulator
 ) -> List[Any]:
-    """Monkey-patch production entry points and pylate.rank.rerank.
+    """Monkey-patch production entry points with phase timers.
 
     Returns a list of (module, attr, original) tuples for restoration.
     """
     undo: List[Any] = []
 
-    import pylate
-    import pylate.rank
     from funding_statement_extractor.statements import extraction as extraction_mod
 
     orig_split = extraction_mod._split_into_paragraphs
@@ -162,6 +161,15 @@ def install_instrumentation(
 
     extraction_mod._split_into_paragraphs = timed_split
     undo.append((extraction_mod, "_split_into_paragraphs", orig_split))
+
+    orig_prefilter = extraction_mod._prefilter_paragraphs
+
+    def timed_prefilter(paragraphs: List[str]) -> Any:
+        with top.phase("paragraph_prefilter"):
+            return orig_prefilter(paragraphs)
+
+    extraction_mod._prefilter_paragraphs = timed_prefilter
+    undo.append((extraction_mod, "_prefilter_paragraphs", orig_prefilter))
 
     cls = extraction_mod.SemanticExtractionService
     for method in (
@@ -185,95 +193,29 @@ def install_instrumentation(
         setattr(cls, method, staticmethod(make_wrapped(orig, phase_name)))
         undo.append((cls, method, staticmethod(orig)))
 
-    orig_rerank = pylate.rank.rerank
-    instrumented = make_instrumented_rerank(top, internals)
-    pylate.rank.rerank = instrumented
-    undo.append((pylate.rank, "rerank", orig_rerank))
+    for method, phase in (
+        ("_prepare_padded_documents", "rerank_pad_docs_once"),
+        ("_get_query_embeddings_tensor", "rerank_pad_queries_once"),
+        ("_score_all_queries", "rerank_score_all_queries"),
+    ):
+        orig = getattr(cls, method)
+
+        def make_wrapped_inst(inner: Any, ph: str) -> Any:
+            def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+                with internals.phase(ph):
+                    return inner(self, *args, **kwargs)
+
+            return wrapped
+
+        setattr(cls, method, make_wrapped_inst(orig, phase))
+        undo.append((cls, method, orig))
+
     return undo
 
 
 def restore(undo: List[Any]) -> None:
     for holder, attr, orig in undo:
         setattr(holder, attr, orig)
-
-
-def make_instrumented_rerank(top: PhaseAccumulator, internals: PhaseAccumulator) -> Any:
-    """Reimplement pylate.rank.rerank with per-step timings.
-
-    Mirrors pylate/rank/rank.py @ 1.4.0 exactly; only adds timing.
-    """
-    import torch
-
-    from pylate.rank.rank import RerankResult, reshape_embeddings
-    from pylate.scores import colbert_scores
-    from pylate.utils import convert_to_tensor as func_convert_to_tensor
-
-    def instrumented_rerank(
-        documents_ids: List[List[Any]],
-        queries_embeddings: Any,
-        documents_embeddings: Any,
-        device: Optional[str] = None,
-    ) -> List[List[Any]]:
-        with top.phase("rerank_total"):
-            results: List[List[RerankResult]] = []
-            queries_embeddings = reshape_embeddings(embeddings=queries_embeddings)
-            documents_embeddings = reshape_embeddings(embeddings=documents_embeddings)
-
-            for query_embeddings, query_documents_ids, query_documents_embeddings in zip(
-                queries_embeddings, documents_ids, documents_embeddings
-            ):
-                with internals.phase("rerank_convert_tensor"):
-                    query_embeddings = func_convert_to_tensor(query_embeddings)
-                    query_documents_embeddings = [
-                        func_convert_to_tensor(qde)
-                        for qde in query_documents_embeddings
-                    ]
-
-                with internals.phase("rerank_pad_sequence"):
-                    query_documents_embeddings = torch.nn.utils.rnn.pad_sequence(
-                        query_documents_embeddings,
-                        batch_first=True,
-                        padding_value=0,
-                    )
-
-                with internals.phase("rerank_device_move"):
-                    if device is not None:
-                        query_embeddings = query_embeddings.to(device)
-                        query_documents_embeddings = query_documents_embeddings.to(device)
-                    else:
-                        query_documents_embeddings = query_documents_embeddings.to(
-                            query_embeddings.device
-                        )
-
-                with internals.phase("rerank_colbert_scores"):
-                    query_scores = colbert_scores(
-                        queries_embeddings=query_embeddings.unsqueeze(0),
-                        documents_embeddings=query_documents_embeddings,
-                    )[0]
-
-                with internals.phase("rerank_sort"):
-                    scores, sorted_indices = torch.sort(
-                        input=query_scores, descending=True
-                    )
-
-                with internals.phase("rerank_cpu_sync_tolist"):
-                    scores_list = scores.cpu().tolist()
-                    sorted_idx_list = sorted_indices.tolist()
-
-                with internals.phase("rerank_construct"):
-                    query_documents = [
-                        query_documents_ids[idx] for idx in sorted_idx_list
-                    ]
-                    results.append(
-                        [
-                            RerankResult(id=doc_id, score=score)
-                            for doc_id, score in zip(query_documents, scores_list)
-                        ]
-                    )
-
-            return results
-
-    return instrumented_rerank
 
 
 def wrap_model_encode(model: Any, top: PhaseAccumulator) -> None:
@@ -354,6 +296,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     wrap_model_encode(model, top)
 
     per_doc_totals_ms: List[float] = []
+    per_doc_predictions: List[Dict[str, Any]] = []
     try:
         for i, row in enumerate(rows[: args.num_docs]):
             text = row["text"]
@@ -370,6 +313,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 top_k=args.top_k,
                 threshold=args.threshold,
                 batch_size=args.batch_size,
+                enable_paragraph_prefilter=args.enable_paragraph_prefilter,
             )
             if sync_device:
                 if sync_device == "cuda":
@@ -378,6 +322,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                     torch.mps.synchronize()
             total_ms = (time.perf_counter() - t0) * 1000.0
             per_doc_totals_ms.append(total_ms)
+            per_doc_predictions.append({
+                "doc_idx": i,
+                "statements": [
+                    {
+                        "statement": s.statement,
+                        "score": s.score,
+                        "query": s.query,
+                        "paragraph_idx": s.paragraph_idx,
+                    }
+                    for s in statements
+                ],
+            })
             top.commit_doc()
             internals.commit_doc()
             warmup = " (warmup)" if i == 0 else ""
@@ -424,6 +380,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "ms": unattributed_ms,
             "pct_of_wallclock": unattributed_pct,
         },
+        "per_doc_predictions": per_doc_predictions,
     }
 
     if args.output:

@@ -127,6 +127,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--compile", action="store_true")
     p.add_argument("--compile-mode", default="reduce-overhead")
+    p.add_argument("--enable-paragraph-prefilter", action="store_true")
     return p.parse_args(argv)
 
 
@@ -172,62 +173,7 @@ def fetch_sample(args: argparse.Namespace) -> List[Dict[str, Any]]:
     return rows
 
 
-def make_instrumented_rerank(top: PhaseAccumulator, internals: PhaseAccumulator) -> Callable[..., Any]:
-    import torch
-
-    from pylate.rank.rank import RerankResult, reshape_embeddings
-    from pylate.scores import colbert_scores
-    from pylate.utils import convert_to_tensor as to_tensor
-
-    def instrumented_rerank(
-        documents_ids: List[List[Any]],
-        queries_embeddings: Any,
-        documents_embeddings: Any,
-        device: Optional[str] = None,
-    ) -> List[List[Any]]:
-        with top.phase("rerank_total"):
-            results: List[List[RerankResult]] = []
-            queries_embeddings = reshape_embeddings(embeddings=queries_embeddings)
-            documents_embeddings = reshape_embeddings(embeddings=documents_embeddings)
-            for q_emb, q_doc_ids, q_doc_embs in zip(
-                queries_embeddings, documents_ids, documents_embeddings
-            ):
-                with internals.phase("rerank_convert_tensor"):
-                    q_emb = to_tensor(q_emb)
-                    q_doc_embs = [to_tensor(e) for e in q_doc_embs]
-                with internals.phase("rerank_pad_sequence"):
-                    q_doc_embs = torch.nn.utils.rnn.pad_sequence(
-                        q_doc_embs, batch_first=True, padding_value=0
-                    )
-                with internals.phase("rerank_device_move"):
-                    if device is not None:
-                        q_emb = q_emb.to(device)
-                        q_doc_embs = q_doc_embs.to(device)
-                    else:
-                        q_doc_embs = q_doc_embs.to(q_emb.device)
-                with internals.phase("rerank_colbert_scores"):
-                    scores = colbert_scores(
-                        queries_embeddings=q_emb.unsqueeze(0),
-                        documents_embeddings=q_doc_embs,
-                    )[0]
-                with internals.phase("rerank_sort"):
-                    s, idx = torch.sort(input=scores, descending=True)
-                with internals.phase("rerank_cpu_sync_tolist"):
-                    s_list = s.cpu().tolist()
-                    idx_list = idx.tolist()
-                with internals.phase("rerank_construct"):
-                    docs = [q_doc_ids[i] for i in idx_list]
-                    results.append(
-                        [RerankResult(id=d, score=sc) for d, sc in zip(docs, s_list)]
-                    )
-            return results
-
-    return instrumented_rerank
-
-
 def install_instrumentation(top: PhaseAccumulator, internals: PhaseAccumulator) -> None:
-    import pylate
-    import pylate.rank
     from funding_statement_extractor.statements import extraction as extraction_mod
 
     orig_split = extraction_mod._split_into_paragraphs
@@ -237,6 +183,14 @@ def install_instrumentation(top: PhaseAccumulator, internals: PhaseAccumulator) 
             return orig_split(text)
 
     extraction_mod._split_into_paragraphs = timed_split
+
+    orig_prefilter = extraction_mod._prefilter_paragraphs
+
+    def timed_prefilter(paragraphs: List[str]) -> Any:
+        with top.phase("paragraph_prefilter"):
+            return orig_prefilter(paragraphs)
+
+    extraction_mod._prefilter_paragraphs = timed_prefilter
 
     cls = extraction_mod.SemanticExtractionService
     for method in (
@@ -257,7 +211,21 @@ def install_instrumentation(top: PhaseAccumulator, internals: PhaseAccumulator) 
 
         setattr(cls, method, staticmethod(make_w(orig, phase_name)))
 
-    pylate.rank.rerank = make_instrumented_rerank(top, internals)
+    for method, phase in (
+        ("_prepare_padded_documents", "rerank_pad_docs_once"),
+        ("_get_query_embeddings_tensor", "rerank_pad_queries_once"),
+        ("_score_all_queries", "rerank_score_all_queries"),
+    ):
+        orig = getattr(cls, method)
+
+        def make_w_inst(inner: Any, ph: str) -> Any:
+            def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+                with internals.phase(ph):
+                    return inner(self, *args, **kwargs)
+
+            return wrapped
+
+        setattr(cls, method, make_w_inst(orig, phase))
 
 
 def wrap_model_encode(model: Any, top: PhaseAccumulator) -> None:
@@ -354,6 +322,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     wrap_model_encode(model, top)
 
     per_doc_totals: List[float] = []
+    per_doc_predictions: List[Dict[str, Any]] = []
     for i, row in enumerate(rows[: args.num_docs]):
         text = row["text"]
         _sync(sync_device)
@@ -365,10 +334,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             top_k=args.top_k,
             threshold=args.threshold,
             batch_size=args.batch_size,
+            enable_paragraph_prefilter=args.enable_paragraph_prefilter,
         )
         _sync(sync_device)
         dt_ms = (time.perf_counter() - t0) * 1000.0
         per_doc_totals.append(dt_ms)
+        per_doc_predictions.append({
+            "doc_idx": i,
+            "statements": [
+                {
+                    "statement": s.statement,
+                    "score": s.score,
+                    "query": s.query,
+                    "paragraph_idx": s.paragraph_idx,
+                }
+                for s in stmts
+            ],
+        })
         top.commit_doc()
         internals.commit_doc()
         warm = " (warmup)" if i == 0 else ""
@@ -405,17 +387,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         "rerank_call_counts": internals.call_counts(),
         "unattributed_ms": unattr,
         "unattributed_pct": (unattr / real_total * 100.0) if real_total > 0 else 0.0,
+        "per_doc_predictions": per_doc_predictions,
     }
 
     print("===PROFILE_JSON===")
     print(json.dumps(report, indent=2))
     print("===END_PROFILE_JSON===")
 
+    rerank_internals_ms = sum(
+        v.get("mean_ms", 0.0) for v in int_sum.get("phases", {}).values()
+    )
     logger.info(
-        "mean per doc=%.0fms encode=%.0fms rerank=%.0fms unattr=%.1f%%",
+        "mean per doc=%.0fms encode=%.0fms rerank_internals=%.0fms unattr=%.1f%%",
         real_total,
         top_sum["phases"].get("model_encode_doc", {}).get("mean_ms", 0.0),
-        top_sum["phases"].get("rerank_total", {}).get("mean_ms", 0.0),
+        rerank_internals_ms,
         report["unattributed_pct"],
     )
     return 0
