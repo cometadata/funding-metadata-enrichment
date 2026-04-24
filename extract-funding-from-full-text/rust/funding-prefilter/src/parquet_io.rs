@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use arrow_array::{Array, LargeStringArray, RecordBatch, StringArray, UInt32Array};
+use arrow_array::{Array, LargeStringArray, RecordBatch, RecordBatchReader, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::arrow::{ArrowWriter, ProjectionMask};
@@ -204,14 +204,17 @@ pub fn read_shard_rows(
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .with_context(|| format!("reading parquet metadata from {}", path.display()))?;
 
-    let schema = builder.schema().clone();
-    let arxiv_col = column_index(&schema, "arxiv_id", path)?;
-    let text_col = column_index(&schema, "text", path)?;
-    let status_col = column_index(&schema, "status", path)?;
+    // Look up indices in the PRE-projection arrow schema to compute the leaf
+    // mask. These are positions in the on-disk schema, which is how
+    // ProjectionMask::leaves expects to be addressed.
+    let pre_schema = builder.schema().clone();
+    let arxiv_col_pre = column_index(&pre_schema, "arxiv_id", path)?;
+    let text_col_pre = column_index(&pre_schema, "text", path)?;
+    let status_col_pre = column_index(&pre_schema, "status", path)?;
 
     let mask = ProjectionMask::leaves(
         builder.parquet_schema(),
-        [arxiv_col, text_col, status_col],
+        [arxiv_col_pre, text_col_pre, status_col_pre],
     );
 
     let reader = builder
@@ -222,10 +225,17 @@ pub fn read_shard_rows(
             format!("building parquet record batch reader for {}", path.display())
         })?;
 
-    // Note: after projection, the returned batches still expose columns under
-    // the ORIGINAL schema ordering — columns not in the mask come back as
-    // null-filled (unprojected) but we only ever index the three we care about
-    // so the indices above remain valid.
+    // After projection, the yielded RecordBatches contain ONLY the projected
+    // columns, re-indexed contiguously from 0..N-1 in the original schema's
+    // relative order. The pre-projection indices (e.g. 5 for `text` on the
+    // real schema) would point past the end of a 3-column projected batch and
+    // panic, so re-resolve every column by name against the post-projection
+    // schema before iterating.
+    let projected_schema = reader.schema();
+    let arxiv_col = column_index(&projected_schema, "arxiv_id", path)?;
+    let text_col = column_index(&projected_schema, "text", path)?;
+    let status_col = column_index(&projected_schema, "status", path)?;
+
     let iter = ShardRowIter {
         reader,
         path: path.to_path_buf(),
@@ -315,9 +325,12 @@ pub fn read_candidate_arxiv_ids(path: &Path) -> Result<Vec<String>> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .with_context(|| format!("reading candidate parquet metadata from {}", path.display()))?;
 
-    let schema = builder.schema().clone();
-    let arxiv_col = column_index(&schema, "arxiv_id", path)?;
-    let mask = ProjectionMask::leaves(builder.parquet_schema(), [arxiv_col]);
+    // Pre-projection index drives the leaf mask; the post-projection index
+    // (resolved below from `reader.schema()`) is what addresses the projected
+    // batch — same C2 pattern as in `read_shard_rows`.
+    let pre_schema = builder.schema().clone();
+    let arxiv_col_pre = column_index(&pre_schema, "arxiv_id", path)?;
+    let mask = ProjectionMask::leaves(builder.parquet_schema(), [arxiv_col_pre]);
 
     let reader = builder
         .with_projection(mask)
@@ -326,6 +339,9 @@ pub fn read_candidate_arxiv_ids(path: &Path) -> Result<Vec<String>> {
         .with_context(|| {
             format!("building reader for candidate parquet {}", path.display())
         })?;
+
+    let projected_schema = reader.schema();
+    let arxiv_col = column_index(&projected_schema, "arxiv_id", path)?;
 
     let mut out: Vec<String> = Vec::new();
     for batch_res in reader {
@@ -497,6 +513,50 @@ mod tests {
         assert_eq!(
             rows[0].text,
             "This work was supported by the NSF (LargeUtf8)."
+        );
+        assert_eq!(rows[0].status, "ok");
+    }
+
+    /// Regression for C2: column projection re-indexes contiguously, so the
+    /// stored column indices must be resolved against the post-projection
+    /// schema. With the original schema arranged as
+    /// `[arxiv_id, dummy, text, dummy2, status]`, the pre-projection index
+    /// for `status` is 4 — but the projected batch only has 3 columns, so
+    /// `batch.column(4)` would panic. The fix re-resolves indices against
+    /// `reader.schema()`.
+    #[test]
+    fn reader_reads_full_row_with_extra_column_in_middle() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("input_extra_middle.parquet");
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("arxiv_id", DataType::Utf8, false),
+            Field::new("dummy", DataType::Utf8, false),
+            Field::new("text", DataType::Utf8, false),
+            Field::new("dummy2", DataType::Utf8, false),
+            Field::new("status", DataType::Utf8, false),
+        ]));
+        let arxiv = Arc::new(StringArray::from(vec!["2401.99999"])) as Arc<dyn Array>;
+        let dummy = Arc::new(StringArray::from(vec!["pad-1"])) as Arc<dyn Array>;
+        let text = Arc::new(StringArray::from(vec![
+            "This work was supported by NIH grant R01-12345.",
+        ])) as Arc<dyn Array>;
+        let dummy2 = Arc::new(StringArray::from(vec!["pad-2"])) as Arc<dyn Array>;
+        let status = Arc::new(StringArray::from(vec!["ok"])) as Arc<dyn Array>;
+        write_input_parquet(
+            &path,
+            schema,
+            vec![arxiv, dummy, text, dummy2, status],
+        )
+        .unwrap();
+
+        let iter = read_shard_rows(&path).unwrap();
+        let rows: Vec<InputRow> = iter.collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].arxiv_id, "2401.99999");
+        assert_eq!(
+            rows[0].text,
+            "This work was supported by NIH grant R01-12345."
         );
         assert_eq!(rows[0].status, "ok");
     }
