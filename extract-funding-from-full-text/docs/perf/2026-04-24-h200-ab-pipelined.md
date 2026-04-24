@@ -109,4 +109,6 @@ Expected billed cost for the rerun: ≈ $0.30.
 
 ## Conclusion
 
-The pipelined batch engine is **correct** (F1 parity on every bucket, identical bucket-level metrics to the legacy baseline) and **faster** (50.4 vs 22.78 docs/sec in Tier 2 on a completed H200 run). It does not currently hit the design doc's aggressive throughput/memory targets — the GPU is under-utilized at `paragraphs_per_batch=4096`. Tuning work can follow-up in a separate PR. F1 parity alone is sufficient to proceed with PR 2 review; the throughput miss should be flagged in the PR description.
+The pipelined batch engine is **correct** (F1 parity on every bucket, identical bucket-level metrics to the legacy baseline) and **faster** (50.4 vs 22.78 docs/sec in Tier 2 on a completed H200 run). It does not hit the design doc's 250 docs/sec target.
+
+Phase 2 tuning (Experiments A, B, and a sharded-harness side-quest) in `docs/perf/tier2-throughput-tuning.md` established that **no single knob closes the 5× gap**. Worker count, pipeline batch size, and even 4-GPU sharding produce single-digit-to-2× improvements at best; the prefilter narrows Tier 2's GPU workload so far that end-to-end wall is dominated by pipeline overhead and fixed per-process setup, not encode. **Recommendation: revise the Tier 2 target to ~50–60 docs/sec and ship.** See `tier2-throughput-tuning.md` for full numbers, diagnosis, and deferred architectural options.
