@@ -241,6 +241,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         help="CPU workers for the pre/post pool. Default: cpu_count - 2.",
     )
+    parser.add_argument(
+        "--allow-cpu",
+        action="store_true",
+        help="Skip the CUDA-required probe. Intended for Mac byte-identity "
+             "gate runs where running on CPU is the explicit goal.",
+    )
 
     return parser.parse_args(argv)
 
@@ -667,28 +673,36 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     import torch
 
-    cuda_ok = False
-    for attempt in range(30):
-        try:
-            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                cuda_ok = True
-                break
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("cuda probe attempt %d failed: %s", attempt, exc)
-        time.sleep(1)
-    if not cuda_ok:
-        logger.error(
-            "CUDA not available after 30s wait — refusing to fall back to CPU "
-            "(would take ~14h on h200 host CPU). Aborting."
+    if args.allow_cpu:
+        logger.info(
+            "torch=%s cuda=%s device=%s (allow-cpu=True; skipping CUDA-required probe)",
+            torch.__version__,
+            torch.cuda.is_available(),
+            "cpu" if not torch.cuda.is_available() else torch.cuda.get_device_name(0),
         )
-        return 2
+    else:
+        cuda_ok = False
+        for attempt in range(30):
+            try:
+                if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                    cuda_ok = True
+                    break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cuda probe attempt %d failed: %s", attempt, exc)
+            time.sleep(1)
+        if not cuda_ok:
+            logger.error(
+                "CUDA not available after 30s wait — refusing to fall back to CPU "
+                "(would take ~14h on h200 host CPU). Aborting."
+            )
+            return 2
 
-    logger.info(
-        "torch=%s cuda=%s device=%s",
-        torch.__version__,
-        torch.cuda.is_available(),
-        torch.cuda.get_device_name(0),
-    )
+        logger.info(
+            "torch=%s cuda=%s device=%s",
+            torch.__version__,
+            torch.cuda.is_available(),
+            torch.cuda.get_device_name(0),
+        )
 
     subdirs = [s.strip() for s in args.subdirs.split(",") if s.strip()]
     ds = load_merged_split(args.dataset, args.split, subdirs)
