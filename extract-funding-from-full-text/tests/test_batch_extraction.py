@@ -357,3 +357,11 @@ def test_encode_with_oom_fallback_raises_at_batch_one():
 
     with __import__("pytest").raises(torch.cuda.OutOfMemoryError):
         _encode_with_oom_fallback(AlwaysOOM(), ["a"], encode_batch_size=4)
+
+
+def test_worker_init_loads_patterns():
+    from funding_statement_extractor.statements import batch_extraction as bx
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    assert bx._WORKER_COMPILED_POS_PATTERNS is not None
+    assert bx._WORKER_COMPILED_NEG_PATTERNS is not None
+    assert len(bx._WORKER_COMPILED_POS_PATTERNS) > 0

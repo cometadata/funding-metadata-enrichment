@@ -1,3 +1,4 @@
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Pattern, Set, Tuple
@@ -6,12 +7,36 @@ import numpy as np
 import torch
 from pylate.scores import colbert_scores
 
+from funding_statement_extractor.config.loader import load_funding_patterns
 from funding_statement_extractor.statements.extraction import (
     SemanticExtractionService,
     _prefilter_paragraphs,
     _split_into_paragraphs,
 )
 from funding_statement_extractor.statements.models import FundingStatement
+
+
+_WORKER_COMPILED_POS_PATTERNS: Optional[List[Pattern]] = None
+_WORKER_COMPILED_NEG_PATTERNS: Optional[List[Pattern]] = None
+
+
+def _worker_init(patterns_file: Optional[str], custom_config_dir: Optional[str]) -> None:
+    """Pool initializer — runs once per worker process at startup."""
+    global _WORKER_COMPILED_POS_PATTERNS, _WORKER_COMPILED_NEG_PATTERNS
+    pos_pat, neg_pat = load_funding_patterns(patterns_file, custom_config_dir)
+    _WORKER_COMPILED_POS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in pos_pat]
+    _WORKER_COMPILED_NEG_PATTERNS = [re.compile(p, re.IGNORECASE) for p in neg_pat]
+
+
+def _post_task_in_worker(item: "_PostIn", *, top_k: int, threshold: float,
+                         regex_match_score_floor: float) -> "BatchResult":
+    """Wrapper that pulls precompiled patterns from worker globals."""
+    return _post_task(
+        item, top_k=top_k, threshold=threshold,
+        regex_match_score_floor=regex_match_score_floor,
+        compiled_patterns=_WORKER_COMPILED_POS_PATTERNS or [],
+        negative_patterns=_WORKER_COMPILED_NEG_PATTERNS or [],
+    )
 
 
 @dataclass
