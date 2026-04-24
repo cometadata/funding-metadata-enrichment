@@ -6,9 +6,15 @@ The statement-only ColBERT extractor (`funding_statement_extractor.statements.ex
 
 **Root cause:** the extractor calls `rank.rerank(..., documents_embeddings=[documents_embeddings])` 32 times per document (one per query, `extraction.py:270-271`), and each rerank invocation runs `torch.nn.utils.rnn.pad_sequence(...)` and `.to(device)` on the exact same paragraphs (pylate `rank/rank.py:128-138`). That pad+move averages **393 ms / doc (44%)** on H200.
 
-**Committed recommendation:** hoist pad+move out of the rerank loop — pre-pad and pre-move `documents_embeddings` once per document, and either (a) patch `pylate.rank.rerank` to accept a pre-padded tensor, or (b) inline a minimal rerank loop in `SemanticExtractionService.extract_funding_statements` that calls `colbert_scores` directly with the shared document embeddings. Expected savings: ~31/32 × 393 ms ≈ **380 ms / doc, a 42% reduction**. At the planned 14,261-doc train benchmark this turns a ~3.7-hour run into ~2.1 hours (~$11 instead of ~$18 at $5/hr h200).
+**Committed recommendation — three layered fixes in priority order:**
 
-Do **not** apply `torch.compile(mode='reduce-overhead')` — it is 8.7× slower for this workload (dynamic paragraph-count shapes force continuous recompilation).
+1. **Hoist pad+move out of the rerank loop** (primary, this PR): pre-pad and pre-move `documents_embeddings` once per document, either by patching `pylate.rank.rerank` or by inlining a minimal rerank loop in `SemanticExtractionService.extract_funding_statements` that calls `colbert_scores` directly with shared document embeddings. Expected: ~380 ms/doc saved, taking per-doc time to ~520 ms (42% reduction).
+2. **Batch queries + pre-convert + hoist `doc_ids`** (same PR as hoist, tiny additional diff): one `colbert_scores` einsum across all 32 queries instead of 32 sequential calls; store query embeddings already as tensors; compute `doc_ids` once per doc. Expected: another ~110 ms saved, ~410 ms/doc total.
+3. **Regex pre-filter paragraphs before encoding** (separate PR, architectural): the average doc has ~300 paragraphs, of which typically 1–3 contain funding statements; all encode and rerank work scales with paragraph count. Filter paragraphs by keyword match (the same keyword set `_is_likely_funding_statement` already uses) before `model.encode`. Expected: ~100–150 ms/doc total, an 8–9× speedup over baseline. Requires measuring recall delta on the held-out split.
+
+At the planned 14,261-doc train benchmark, ~$18 at $5/hr h200 drops to ~$10 after fix 1, ~$8 after fix 2, and ~$2–3 after fix 3. See the "Stacked additional wins" section for details.
+
+Do **not** apply `torch.compile(mode='reduce-overhead')` — it is 8.7× slower for this workload (dynamic paragraph-count shapes force continuous recompilation). Default mode is worth a validation run only after fixes 1–3 are measured.
 
 ## Measurements
 
@@ -117,11 +123,52 @@ Option B is preferred — no pylate monkey-patch, no behavior change to other ca
 - Expect per-doc wall-clock to drop from ~898 ms to **~520 ms**.
 - Confirm predicted_statements are byte-identical to the baseline 50-doc output JSON for the same seed=42 sample (no semantic regression).
 
-### What NOT to attempt as "while we're here" extensions
+## Stacked additional wins
 
-- **Cross-doc encode batching**: encode is only 22% of per-doc time and already well-saturated at BS=512 on ~300-paragraph docs. Cross-doc batching adds architectural complexity for a ≤20% local win; do this only if the pad_sequence fix still leaves you encode-bound.
-- **Vectorizing queries across a single `colbert_scores` call** (`queries_embeddings` shape `(32, n_q_toks, emb_dim)`): the 32× sequential einsum is only ~93 ms on H200, under 11% of current per-doc time. Not a priority.
-- **torch.compile in any mode**: confirmed slower on this workload; do not revisit unless the encode cost becomes dominant post-fix.
+520 ms/doc is still dominated by work that doesn't need to scale with paragraph count or query count. Three tiers of further speedups, ordered by diminishing return on engineering effort:
+
+### Tier 1 — nearly-free follow-ons (same PR as the hoist)
+
+No semantic change; byte-identical predictions. All measured against the post-hoist baseline of ~520 ms/doc.
+
+1. **Batch all 32 queries into one `colbert_scores` einsum.** Currently the rerank loop runs 32 sequential calls of `colbert_scores(q_emb.unsqueeze(0), padded_docs)[0]`. Replace with one call: stack queries into a `(32, max_q_toks, emb_dim)` tensor (use `pad_sequence` on query embeddings once at service init, cached alongside `_query_embeddings_cache`), call `colbert_scores` once to get `(32, n_paragraphs)`, then loop over the result rows for filtering. Saves ~85 ms (93 ms → ~8 ms) by collapsing 32 small kernel launches into one larger launch that better utilizes H200.
+2. **Pre-convert query embeddings to tensors once** outside the loop. `func_convert_to_tensor(q_emb)` runs on every iteration in the current code; at service init or during `_get_query_embeddings`, store them already as tensors. Saves ~22 ms (trivially).
+3. **Hoist `doc_ids = list(range(len(paragraphs)))` out of the query loop** — currently allocated 32× per doc. ~2 ms, near-free.
+
+Expected cumulative after Tier 1 (hoist + batched queries + pre-convert + doc_ids hoist): **~410 ms/doc, ~2.2× over the 898 ms baseline.**
+
+### Tier 2 — regex pre-filter paragraphs before encoding (architectural, but high-leverage)
+
+The average doc has ~300 paragraphs, of which typically 1–3 contain funding statements. Everything after paragraph splitting — encode (~199 ms) and every rerank component that scales with paragraph count (pad_sequence, colbert_scores einsum, convert_tensor) — is spent reranking paragraphs that have essentially zero chance of being funding.
+
+Patch: between `paragraphs = _split_into_paragraphs(content)` and `model.encode(paragraphs, ...)` in `extraction.py:245-252`, run a cheap regex filter over paragraphs and keep only those containing any of the funding keyword set already used by `_is_likely_funding_statement` (`extraction.py:100-102`) — `fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial`. Retain ±1 neighboring paragraph for context to cover the occasional "We acknowledge …" header split. Preserve original paragraph indexes so `paragraph_idx` in the output matches the pre-filter position.
+
+Projected impact at 10–15 surviving paragraphs per doc:
+- encode: 199 ms → ~10 ms (95% fewer paragraphs encoded)
+- rerank pad_sequence (post-hoist): ~12 ms → ~0.5 ms
+- rerank colbert_scores (post-batched): ~8 ms → ~0.5 ms
+- rerank convert_tensor: ~22 ms → ~1 ms
+- filter_is_likely: 30 ms → ~3 ms (runs on reranked top-k, which shrinks proportionally)
+
+Expected after Tier 2 combined with Tier 1: **~100–150 ms/doc, 6–9× over the 898 ms baseline.**
+
+**Recall risk:** any funding statement that uses no keyword in the filter list gets dropped. Your existing `_is_likely_funding_statement` already relies on the same keyword set for low-score paragraphs, so most statements that would survive that filter should also survive a pre-filter with the same regex. High-score paragraphs above `threshold=10.0` currently bypass the keyword check; pre-filter would catch those too. Mitigation: run the pre-filter + post-filter combined against the held-out test split and report recall delta vs the no-pre-filter baseline. Tune the regex list to expand until recall is within 1–2 pts of the baseline, or make pre-filter opt-in behind a flag.
+
+### Tier 3 — hold until Tier 1 + Tier 2 are measured
+
+- **`torch.compile(mode='default')` on encode**: the failed compile experiment used `reduce-overhead` (CUDA graphs keyed on shape). Default mode does not use CUDA graphs and may not recompile on every new shape. Worth a single validation run post-Tier-2, once encode is ≤10% of per-doc time; before that, the effort-to-return ratio is bad.
+- **Cross-doc encode batching**: after Tier 2 encode is ~10 ms/doc, flattening paragraphs across N docs into one forward pass would save maybe 50% of that. Adds non-trivial complexity (doc boundary tracking, memory sizing). Skip unless encode becomes the new bottleneck.
+- **Async/pipelined processing** (encode doc N+1 while rerank for doc N runs): real engineering investment. Not worth it until Tier 1 + Tier 2 are shipped and measured.
+
+### Consolidated projection
+
+| Configuration | Per-doc wall-clock | 14,261-doc train cost @ $5/hr h200 |
+|---|---:|---:|
+| Current baseline (H200 measured) | 898 ms | ~3.6 hr, ~$18 |
+| Committed hoist (pad+move once per doc) | ~520 ms | ~2.1 hr, ~$10 |
+| + Tier 1 (batched queries + pre-convert + hoist doc_ids) | ~410 ms | ~1.6 hr, ~$8 |
+| + Tier 2 (regex pre-filter before encode) | ~100–150 ms | ~25–35 min, ~$2–3 |
+| + Tier 3 (compile, cross-doc, async) | TBD | TBD |
 
 ## Reproducibility
 
