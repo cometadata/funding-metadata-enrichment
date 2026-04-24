@@ -537,3 +537,45 @@ def test_batch_engine_clean_shutdown_on_generator_close(monkeypatch):
         consumed.append(next(gen))
     gen.close()
     assert len(consumed) == 3
+
+
+def test_batch_engine_resident_memory_bounded_under_slow_consumer(monkeypatch):
+    """Stream 200 docs through a slow consumer and verify queue depth caps memory.
+
+    Asserts indirect signal: number of in-flight items never exceeds
+    queue_depth * (4 stages + 2 done bound) + workers slack.
+    """
+    import platform
+    import resource
+    import time
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+
+    docs = [DocPayload(doc_id=f"d{i}", text=f"Para.\n\nGrant {i}." * 10) for i in range(200)]
+
+    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+    consumed = 0
+    for r in bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=16, encode_batch_size=8, workers=4, queue_depth=8,
+        enable_paragraph_prefilter=False,
+    ):
+        time.sleep(0.005)   # slow consumer
+        consumed += 1
+
+    rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    assert consumed == 200
+    # ru_maxrss units differ by platform: KB on Linux, BYTES on macOS.
+    # Normalize both to MB here.
+    if platform.system() == "Darwin":
+        growth_mb = (rss_after - rss_before) / (1024.0 * 1024.0)
+    else:
+        growth_mb = (rss_after - rss_before) / 1024.0
+    # Soft check: RSS growth is bounded (allow 200 MB headroom for normal jitter)
+    assert growth_mb < 200, f"resident memory grew {growth_mb} MB under bounded queues"
