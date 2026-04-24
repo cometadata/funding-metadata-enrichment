@@ -365,3 +365,36 @@ def test_worker_init_loads_patterns():
     assert bx._WORKER_COMPILED_POS_PATTERNS is not None
     assert bx._WORKER_COMPILED_NEG_PATTERNS is not None
     assert len(bx._WORKER_COMPILED_POS_PATTERNS) > 0
+
+
+def test_batch_engine_end_to_end_with_thread_pool(monkeypatch):
+    """End-to-end with a fake model and thread-backed pool. No real GPU/process spawn."""
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    # Pre-load patterns into the test process's globals so worker functions can find them.
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+
+    model = FakeColBERT(dim=8)
+    docs = [
+        DocPayload(doc_id=f"d{i}", text=f"Para A.\n\nThis work supported by NSF grant {i}.\n\nPara C.")
+        for i in range(5)
+    ]
+    queries = {"q1": "funding statement"}
+
+    # Inject fake model + dummy ThreadPool factory
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+
+    results = list(bx.extract_funding_statements_batch(
+        documents=iter(docs), queries=queries,
+        paragraphs_per_batch=4, encode_batch_size=2, workers=2, queue_depth=8,
+        enable_paragraph_prefilter=False,
+    ))
+
+    assert len(results) == 5
+    assert {r.doc_id for r in results} == {f"d{i}" for i in range(5)}
+    # No errors
+    assert all(r.error is None for r in results)
+    # Timings populated
+    assert all(r.timings is not None and "gpu_ms" in r.timings for r in results)
