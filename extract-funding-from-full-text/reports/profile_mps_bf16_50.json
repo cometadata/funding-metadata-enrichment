@@ -1,0 +1,150 @@
+{
+  "run_config": {
+    "device": "mps",
+    "dtype": "bf16",
+    "num_docs": 50,
+    "batch_size": 512,
+    "top_k": 5,
+    "threshold": 10.0,
+    "colbert_model": "lightonai/GTE-ModernColBERT-v1",
+    "queries_file": null,
+    "cache_dir": ".cache/profile_docs",
+    "dataset": "cometadata/arxiv-funding-statement-extraction",
+    "subdir": "data",
+    "split": "train",
+    "seed": 42,
+    "compile": false,
+    "compile_mode": "reduce-overhead",
+    "output": "reports/profile_mps_bf16_50.json",
+    "verbose": false
+  },
+  "resolved": {
+    "device": "mps",
+    "torch": "2.9.0",
+    "gpu_name": "Apple MPS",
+    "alloc_gb": 0.515357952
+  },
+  "wall_clock_per_doc_ms": {
+    "mean_excl_warmup": 16632.104573118006,
+    "warmup_ms": 4876.618167036213,
+    "num_docs": 50
+  },
+  "top_phases": {
+    "phases": {
+      "filter_extract_funding_sentences": {
+        "mean_ms": 0.03014112185990932,
+        "median_ms": 0.0,
+        "p95_ms": 0.0,
+        "total_ms": 1.4769149711355567,
+        "pct_of_wallclock": 0.0001813670903355463
+      },
+      "filter_is_likely_funding_statement": {
+        "mean_ms": 5.822614633611271,
+        "median_ms": 5.452085577417165,
+        "p95_ms": 7.729625620413572,
+        "total_ms": 285.30811704695225,
+        "pct_of_wallclock": 0.03503620997093259
+      },
+      "filter_should_extract_full_paragraph": {
+        "mean_ms": 0.0711239931382695,
+        "median_ms": 0.011123076546937227,
+        "p95_ms": 0.6041238666512072,
+        "total_ms": 3.4850756637752056,
+        "pct_of_wallclock": 0.0004279718501682906
+      },
+      "model_encode_doc": {
+        "mean_ms": 16466.558814571446,
+        "median_ms": 12797.940250020474,
+        "p95_ms": 35333.55900004972,
+        "total_ms": 806861.381914001,
+        "pct_of_wallclock": 99.08363311487406
+      },
+      "paragraph_split": {
+        "mean_ms": 0.3193826913567526,
+        "median_ms": 0.20841695368289948,
+        "p95_ms": 0.8924590074457228,
+        "total_ms": 15.649751876480877,
+        "pct_of_wallclock": 0.001921810001105391
+      },
+      "rerank_total": {
+        "mean_ms": 146.0463613383377,
+        "median_ms": 90.32824909081683,
+        "p95_ms": 344.71037599723786,
+        "total_ms": 7156.271705578547,
+        "pct_of_wallclock": 0.8787995262133823
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 16618.848438349753,
+    "warmup_skipped": true
+  },
+  "rerank_internals": {
+    "phases": {
+      "rerank_colbert_scores": {
+        "mean_ms": 75.90796472861109,
+        "median_ms": 51.67975090444088,
+        "p95_ms": 160.47333291498944,
+        "total_ms": 3719.490271701943,
+        "pct_of_wallclock": 52.15271307910061
+      },
+      "rerank_construct": {
+        "mean_ms": 1.2563127294962046,
+        "median_ms": 0.7956668850965798,
+        "p95_ms": 3.530499874614179,
+        "total_ms": 61.55932374531403,
+        "pct_of_wallclock": 0.8631520757181042
+      },
+      "rerank_convert_tensor": {
+        "mean_ms": 3.266171760125352,
+        "median_ms": 2.117043826729059,
+        "p95_ms": 10.260959097649902,
+        "total_ms": 160.04241624614224,
+        "pct_of_wallclock": 2.2440295861163353
+      },
+      "rerank_cpu_sync_tolist": {
+        "mean_ms": 0.33765700788294173,
+        "median_ms": 0.2282049390487373,
+        "p95_ms": 0.8216259302571416,
+        "total_ms": 16.545193386264145,
+        "pct_of_wallclock": 0.2319878963192547
+      },
+      "rerank_device_move": {
+        "mean_ms": 0.09203065372053154,
+        "median_ms": 0.08162582525983453,
+        "p95_ms": 0.14917104272171855,
+        "total_ms": 4.509502032306045,
+        "pct_of_wallclock": 0.06322983754246107
+      },
+      "rerank_pad_sequence": {
+        "mean_ms": 63.924084551755946,
+        "median_ms": 36.21979209128767,
+        "p95_ms": 170.76150188222528,
+        "total_ms": 3132.2801430360414,
+        "pct_of_wallclock": 43.919165167859134
+      },
+      "rerank_sort": {
+        "mean_ms": 0.7651857746650979,
+        "median_ms": 0.5609988584183156,
+        "p95_ms": 1.580837182700634,
+        "total_ms": 37.49410295858979,
+        "pct_of_wallclock": 0.5257223573440996
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 145.54940720625717,
+    "warmup_skipped": true
+  },
+  "rerank_call_counts": {
+    "rerank_convert_tensor": 1600,
+    "rerank_pad_sequence": 1600,
+    "rerank_device_move": 1600,
+    "rerank_colbert_scores": 1600,
+    "rerank_sort": 1600,
+    "rerank_cpu_sync_tolist": 1600,
+    "rerank_construct": 1600
+  },
+  "unattributed": {
+    "ms": 13.256134768253105,
+    "pct_of_wallclock": 0.07970208887261698
+  }
+}

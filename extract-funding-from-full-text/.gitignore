@@ -15,4 +15,6 @@ venv/
 .uv_cache/
 .hf_cache/
 
+.cache/
+
 .DS_Store

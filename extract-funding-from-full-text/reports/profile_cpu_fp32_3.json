@@ -1,0 +1,134 @@
+{
+  "run_config": {
+    "device": "cpu",
+    "dtype": "fp32",
+    "num_docs": 3,
+    "batch_size": 64,
+    "top_k": 5,
+    "threshold": 10.0,
+    "colbert_model": "lightonai/GTE-ModernColBERT-v1",
+    "queries_file": null,
+    "cache_dir": ".cache/profile_docs",
+    "dataset": "cometadata/arxiv-funding-statement-extraction",
+    "subdir": "data",
+    "split": "train",
+    "seed": 42,
+    "compile": false,
+    "compile_mode": "reduce-overhead",
+    "output": "reports/profile_cpu_fp32_3.json",
+    "verbose": false
+  },
+  "resolved": {
+    "device": "cpu",
+    "torch": "2.9.0"
+  },
+  "wall_clock_per_doc_ms": {
+    "mean_excl_warmup": 5491.002374998061,
+    "warmup_ms": 6999.032583029475,
+    "num_docs": 3
+  },
+  "top_phases": {
+    "phases": {
+      "filter_is_likely_funding_statement": {
+        "mean_ms": 4.993354057660326,
+        "median_ms": 4.993354057660326,
+        "p95_ms": 4.914751159958541,
+        "total_ms": 9.986708115320653,
+        "pct_of_wallclock": 0.09103821792954322
+      },
+      "model_encode_doc": {
+        "mean_ms": 5431.565187493106,
+        "median_ms": 5431.565187493106,
+        "p95_ms": 1603.87654195074,
+        "total_ms": 10863.130374986213,
+        "pct_of_wallclock": 99.02762943054955
+      },
+      "paragraph_split": {
+        "mean_ms": 0.04097900819033384,
+        "median_ms": 0.04097900819033384,
+        "p95_ms": 0.015208031982183456,
+        "total_ms": 0.08195801638066769,
+        "pct_of_wallclock": 0.0007471242445636183
+      },
+      "rerank_total": {
+        "mean_ms": 48.29920793417841,
+        "median_ms": 48.29920793417841,
+        "p95_ms": 10.7857909752056,
+        "total_ms": 96.59841586835682,
+        "pct_of_wallclock": 0.880585227276341
+      }
+    },
+    "num_docs": 2,
+    "mean_total_ms": 5484.898728493135,
+    "warmup_skipped": true
+  },
+  "rerank_internals": {
+    "phases": {
+      "rerank_colbert_scores": {
+        "mean_ms": 25.56031200219877,
+        "median_ms": 25.56031200219877,
+        "p95_ms": 6.014331942424178,
+        "total_ms": 51.12062400439754,
+        "pct_of_wallclock": 53.22069199015549
+      },
+      "rerank_construct": {
+        "mean_ms": 0.5227290093898773,
+        "median_ms": 0.5227290093898773,
+        "p95_ms": 0.21162396296858788,
+        "total_ms": 1.0454580187797546,
+        "pct_of_wallclock": 1.0884061039890516
+      },
+      "rerank_convert_tensor": {
+        "mean_ms": 1.3745194301009178,
+        "median_ms": 1.3745194301009178,
+        "p95_ms": 0.5564139573834836,
+        "total_ms": 2.7490388602018356,
+        "pct_of_wallclock": 2.861971137816792
+      },
+      "rerank_cpu_sync_tolist": {
+        "mean_ms": 0.1003960205707699,
+        "median_ms": 0.1003960205707699,
+        "p95_ms": 0.04504306707531214,
+        "total_ms": 0.2007920411415398,
+        "pct_of_wallclock": 0.2090407068338848
+      },
+      "rerank_device_move": {
+        "mean_ms": 0.035894481698051095,
+        "median_ms": 0.035894481698051095,
+        "p95_ms": 0.02174900146201253,
+        "total_ms": 0.07178896339610219,
+        "pct_of_wallclock": 0.0747381000057401
+      },
+      "rerank_pad_sequence": {
+        "mean_ms": 20.083042443729937,
+        "median_ms": 20.083042443729937,
+        "p95_ms": 3.527375985868275,
+        "total_ms": 40.166084887459874,
+        "pct_of_wallclock": 41.81613338800506
+      },
+      "rerank_sort": {
+        "mean_ms": 0.35012589069083333,
+        "median_ms": 0.35012589069083333,
+        "p95_ms": 0.19978976342827082,
+        "total_ms": 0.7002517813816667,
+        "pct_of_wallclock": 0.7290185731939715
+      }
+    },
+    "num_docs": 2,
+    "mean_total_ms": 48.02701927837916,
+    "warmup_skipped": true
+  },
+  "rerank_call_counts": {
+    "rerank_convert_tensor": 96,
+    "rerank_pad_sequence": 96,
+    "rerank_device_move": 96,
+    "rerank_colbert_scores": 96,
+    "rerank_sort": 96,
+    "rerank_cpu_sync_tolist": 96,
+    "rerank_construct": 96
+  },
+  "unattributed": {
+    "ms": 6.103646504925564,
+    "pct_of_wallclock": 0.11115723665895735
+  }
+}

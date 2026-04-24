@@ -1,0 +1,143 @@
+{
+  "run_config": {
+    "num_docs": 50,
+    "batch_size": 512,
+    "top_k": 5,
+    "threshold": 10.0,
+    "dtype": "bf16",
+    "colbert_model": "lightonai/GTE-ModernColBERT-v1",
+    "queries_file": null,
+    "dataset": "cometadata/arxiv-funding-statement-extraction",
+    "subdir": "data",
+    "split": "train",
+    "seed": 42,
+    "compile": false,
+    "compile_mode": "reduce-overhead"
+  },
+  "resolved": {
+    "device": "cpu",
+    "torch": "2.6.0+cu124",
+    "cuda_available": false
+  },
+  "wall_clock_per_doc_ms": {
+    "mean_excl_warmup": 18203.88625019553,
+    "warmup_ms": 12291.354785091244,
+    "num_docs": 50
+  },
+  "top_phases": {
+    "phases": {
+      "filter_extract_funding_sentences": {
+        "mean_ms": 0.024488578284425393,
+        "median_ms": 0.0,
+        "p95_ms": 0.0,
+        "total_ms": 1.1999403359368443,
+        "pct_of_wallclock": 0.00013537828479721816
+      },
+      "filter_is_likely_funding_statement": {
+        "mean_ms": 44.26950306574605,
+        "median_ms": 11.741194524802268,
+        "p95_ms": 163.1243247538805,
+        "total_ms": 2169.2056502215564,
+        "pct_of_wallclock": 0.24473161831846685
+      },
+      "filter_should_extract_full_paragraph": {
+        "mean_ms": 0.1392396005364705,
+        "median_ms": 0.02309819683432579,
+        "p95_ms": 1.1693040141835809,
+        "total_ms": 6.822740426287055,
+        "pct_of_wallclock": 0.0007697473523183544
+      },
+      "model_encode_doc": {
+        "mean_ms": 17526.471785659312,
+        "median_ms": 15604.597607976757,
+        "p95_ms": 31078.514338936657,
+        "total_ms": 858797.1174973063,
+        "pct_of_wallclock": 96.8902180163894
+      },
+      "paragraph_split": {
+        "mean_ms": 0.1754533494727648,
+        "median_ms": 0.14262693002820015,
+        "p95_ms": 0.3879780415445566,
+        "total_ms": 8.597214124165475,
+        "pct_of_wallclock": 0.0009699449775186138
+      },
+      "rerank_total": {
+        "mean_ms": 517.9197864027276,
+        "median_ms": 379.1014547459781,
+        "p95_ms": 1266.8614335125312,
+        "total_ms": 25378.06953373365,
+        "pct_of_wallclock": 2.8631752946775064
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 18089.00025665608,
+    "warmup_skipped": true
+  },
+  "rerank_internals": {
+    "phases": {
+      "rerank_colbert_scores": {
+        "mean_ms": 97.85717371518591,
+        "median_ms": 84.61103809531778,
+        "p95_ms": 281.4656663686037,
+        "total_ms": 4795.001512044109,
+        "pct_of_wallclock": 18.984206513424997
+      },
+      "rerank_construct": {
+        "mean_ms": 6.367333862949543,
+        "median_ms": 2.2817382123321295,
+        "p95_ms": 12.018477078527212,
+        "total_ms": 311.9993592845276,
+        "pct_of_wallclock": 1.2352572264755668
+      },
+      "rerank_convert_tensor": {
+        "mean_ms": 25.490332173886802,
+        "median_ms": 7.578242337331176,
+        "p95_ms": 89.40565178636461,
+        "total_ms": 1249.0262765204534,
+        "pct_of_wallclock": 4.945102251709246
+      },
+      "rerank_cpu_sync_tolist": {
+        "mean_ms": 2.212233812909345,
+        "median_ms": 0.4343780456110835,
+        "p95_ms": 1.486379886046052,
+        "total_ms": 108.39945683255792,
+        "pct_of_wallclock": 0.42917143389494045
+      },
+      "rerank_device_move": {
+        "mean_ms": 3.264781888289263,
+        "median_ms": 0.17888611182570457,
+        "p95_ms": 0.26903022080659866,
+        "total_ms": 159.9743125261739,
+        "pct_of_wallclock": 0.6333648442470271
+      },
+      "rerank_pad_sequence": {
+        "mean_ms": 379.0230747996544,
+        "median_ms": 283.056668122299,
+        "p95_ms": 1017.9813822032884,
+        "total_ms": 18572.130665183067,
+        "pct_of_wallclock": 73.53014656127706
+      },
+      "rerank_sort": {
+        "mean_ms": 1.251300300319432,
+        "median_ms": 1.1016856878995895,
+        "p95_ms": 2.3857399355620146,
+        "total_ms": 61.31371471565217,
+        "pct_of_wallclock": 0.2427511689711556
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 515.4662305531947,
+    "warmup_skipped": true
+  },
+  "rerank_call_counts": {
+    "rerank_convert_tensor": 1600,
+    "rerank_pad_sequence": 1600,
+    "rerank_device_move": 1600,
+    "rerank_colbert_scores": 1600,
+    "rerank_sort": 1600,
+    "rerank_cpu_sync_tolist": 1600,
+    "rerank_construct": 1600
+  },
+  "unattributed_ms": 114.88599353945028,
+  "unattributed_pct": 0.6311069623290811
+}

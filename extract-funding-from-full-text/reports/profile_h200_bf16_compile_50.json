@@ -1,0 +1,147 @@
+{
+  "run_config": {
+    "num_docs": 50,
+    "batch_size": 512,
+    "top_k": 5,
+    "threshold": 10.0,
+    "dtype": "bf16",
+    "colbert_model": "lightonai/GTE-ModernColBERT-v1",
+    "queries_file": null,
+    "dataset": "cometadata/arxiv-funding-statement-extraction",
+    "subdir": "data",
+    "split": "train",
+    "seed": 42,
+    "compile": true,
+    "compile_mode": "reduce-overhead"
+  },
+  "resolved": {
+    "device": "cuda",
+    "torch": "2.6.0+cu124",
+    "cuda_available": true,
+    "gpu_name": "NVIDIA H200",
+    "total_gb": 150.10988032,
+    "alloc_gb": 0.341196288,
+    "peak_gb": 3.199410176
+  },
+  "wall_clock_per_doc_ms": {
+    "mean_excl_warmup": 2460.8523373359017,
+    "warmup_ms": 63983.48094895482,
+    "num_docs": 50
+  },
+  "top_phases": {
+    "phases": {
+      "filter_extract_funding_sentences": {
+        "mean_ms": 0.02188490209530811,
+        "median_ms": 0.0,
+        "p95_ms": 0.0,
+        "total_ms": 1.0723602026700974,
+        "pct_of_wallclock": 0.0009432810251267233
+      },
+      "filter_is_likely_funding_statement": {
+        "mean_ms": 21.63250653111205,
+        "median_ms": 10.855152271687984,
+        "p95_ms": 81.8669656291604,
+        "total_ms": 1059.9928200244904,
+        "pct_of_wallclock": 0.9324022948726208
+      },
+      "filter_should_extract_full_paragraph": {
+        "mean_ms": 0.24424449597694436,
+        "median_ms": 0.1416066661477089,
+        "p95_ms": 1.0491395369172096,
+        "total_ms": 11.967980302870274,
+        "pct_of_wallclock": 0.010527403665931197
+      },
+      "model_encode_doc": {
+        "mean_ms": 1740.7669540760774,
+        "median_ms": 127.64542177319527,
+        "p95_ms": 2111.15484777838,
+        "total_ms": 85297.58074972779,
+        "pct_of_wallclock": 75.03037618338901
+      },
+      "paragraph_split": {
+        "mean_ms": 0.1973360016637919,
+        "median_ms": 0.15325751155614853,
+        "p95_ms": 0.42923446744680405,
+        "total_ms": 9.669464081525803,
+        "pct_of_wallclock": 0.008505558084435639
+      },
+      "rerank_total": {
+        "mean_ms": 557.2200092315978,
+        "median_ms": 323.89024272561073,
+        "p95_ms": 1387.1126445010304,
+        "total_ms": 27303.780452348292,
+        "pct_of_wallclock": 24.01724527896289
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 2320.082935238523,
+    "warmup_skipped": true
+  },
+  "rerank_internals": {
+    "phases": {
+      "rerank_colbert_scores": {
+        "mean_ms": 105.93544247047025,
+        "median_ms": 88.88897113502026,
+        "p95_ms": 252.47868709266186,
+        "total_ms": 5190.836681053042,
+        "pct_of_wallclock": 19.291016780170654
+      },
+      "rerank_construct": {
+        "mean_ms": 10.72971950456196,
+        "median_ms": 2.253761515021324,
+        "p95_ms": 77.41272170096636,
+        "total_ms": 525.756255723536,
+        "pct_of_wallclock": 1.9538994144167308
+      },
+      "rerank_convert_tensor": {
+        "mean_ms": 21.376983319618265,
+        "median_ms": 6.9000255316495895,
+        "p95_ms": 85.49133501946926,
+        "total_ms": 1047.472182661295,
+        "pct_of_wallclock": 3.8927835133471693
+      },
+      "rerank_cpu_sync_tolist": {
+        "mean_ms": 2.040171577614181,
+        "median_ms": 0.8111707866191864,
+        "p95_ms": 3.5445718094706535,
+        "total_ms": 99.96840730309486,
+        "pct_of_wallclock": 0.37151857037037667
+      },
+      "rerank_device_move": {
+        "mean_ms": 0.4242055536228783,
+        "median_ms": 0.4149414598941803,
+        "p95_ms": 0.5123289301991463,
+        "total_ms": 20.786072127521038,
+        "pct_of_wallclock": 0.07724852289602374
+      },
+      "rerank_pad_sequence": {
+        "mean_ms": 405.0801713589807,
+        "median_ms": 250.54568890482187,
+        "p95_ms": 1105.7298798114061,
+        "total_ms": 19848.928396590054,
+        "pct_of_wallclock": 73.76575960570311
+      },
+      "rerank_sort": {
+        "mean_ms": 3.5572091915777753,
+        "median_ms": 1.3059666380286217,
+        "p95_ms": 3.3917538821697235,
+        "total_ms": 174.30325038731098,
+        "pct_of_wallclock": 0.6477735930959342
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 549.143902976446,
+    "warmup_skipped": true
+  },
+  "rerank_call_counts": {
+    "rerank_convert_tensor": 1600,
+    "rerank_pad_sequence": 1600,
+    "rerank_device_move": 1600,
+    "rerank_colbert_scores": 1600,
+    "rerank_sort": 1600,
+    "rerank_cpu_sync_tolist": 1600,
+    "rerank_construct": 1600
+  },
+  "unattributed_ms": 140.7694020973786,
+  "unattributed_pct": 5.720351439281171
+}
