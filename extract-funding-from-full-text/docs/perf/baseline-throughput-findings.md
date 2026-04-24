@@ -264,9 +264,59 @@ Aggregate clean + arxiv-latex (n=1384): Tier 1 P=0.885 / R=0.924 / F1=0.905 vs T
 
 Throughput preserved: 22.95 docs/sec (vs 23.70 at floor=3 — basically identical, the floor only changes a Python branch, not GPU work). 14k-doc train cost: ~$3.81 (vs ~$3.69 at floor=3). p50 latency 37 ms.
 
-**Recommendation:** ship Tier 2 with `regex_match_score_floor=11.0` as the default when `enable_paragraph_prefilter=True`. The 1.5pt F1 cost vs Tier 1 is the floor of what this single-lever tune can buy; further recovery would need pattern-set tightening (e.g., replacing the broad `\bsupport\w*\s+(?:by|from|through)` with funding-entity-specific variants) or a two-pass architecture.
+**Recommendation (intermediate):** ship Tier 2 with `regex_match_score_floor=11.0` as the default when `enable_paragraph_prefilter=True`. Closes ~1pt of the F1 gap; further recovery requires pattern-set tightening (next section).
 
-Reports for these runs are in the `cometadata/arxiv-funding-statement-retrieval-extractions` Hub repo (predictions/metrics for `test-tier1-noprefilter`, `test-tier2-prefilter`, `test-tier2-floor11`); local logs were captured but not checked in (large).
+### Tier 2 pattern tightening (closes the F1 gap)
+
+After floor=11, ~1.5pt of F1 vs Tier 1 remained. Mined the residual FPs by running the full clean train split (4161 docs after `--exclude-augmented`) at floor=11 with predictions pushed to hub (`adambuttrick/arxiv-funding-statement-retrieval-extractions/predictions-train-clean-floor11-fp-mining`), then locally diffed each prediction vs gold (rapidfuzz, threshold 0.75) and grouped FPs by which positive pattern matched.
+
+**Top FP-producing patterns and the fix applied:**
+
+| Pattern | n FPs | Fix |
+|---|---:|---|
+| `\bsupport\w*\s+(?:[\w\s]{0,20})?(?:by\|from\|through)` | 42 | Require auxiliary verb prefix: `\b(?:was\|is\|are\|were\|been\|being)\s+(?:partially\|partly\|in\s+part\|fully\|also\|further)?\s*support(?:ed\|ing)?\s+(?:[\w\s]{0,20})?(?:by\|from\|through)` — cuts "supports it", "Supporting cues by", "support that is shared by" |
+| `\baward\s+[a-z0-9]` | 27 | Require `no.\|number\|#` prefix — cuts "Best Paper Award at IEEE GLOBECOM" |
+| `\bfund\w*\s+(?:by\|from\|through)` | 15 | Restrict `\w*` to `(?:s\|ed\|ing\|er)?` — cuts "fundamentally from" |
+| `\bgrant\w*\s+(?:from\|by\|number\|...)` | 11 | Restrict to `\bgrants?` — cuts "Approval was granted by Ethics Committee" |
+| `\bscholarship` | 10 | Require funding context: `\bscholarships?\s+(?:from\|of\|under\|grant\|recipient\|holder\|...)` — cuts "Digital Scholarship in Humanities" / `scholarship.law.umn.edu` |
+| `\bfellowship` | 20 | Same: require funding context |
+| `\baward\w*\s+(?:from\|by\|...)` | 13 | Restrict to `\bawards?` — cuts "awarded by IEEE Transactions" in author bios |
+
+**New negative patterns (specifically targeting the FP shapes):**
+- `support(?:s|ed|ing)?\s+(?:by|from|through)\s+(?:multiple|several|many|various|few|both)\s+(?:thermal|physical|...|sources|measurements|simulations|nodes|cues)\w*` — catches PCT thermal-imaging FPs
+- `support(?:s|ed|ing)?\s+(?:by|from|through)\s+the\s+(?:line|axis|axes|equation|theorem|lemma|graph|...|hyperplane)` — catches "supported by the line" geometry usage
+- `support(?:s|ed|ing)?\s+\w+\s+(?:of|for)\s+\w+\s+(?:by|from)\s+\w+` — catches HTML "Support Force of capsule by PVC"
+- `granted\s+by\s+(?:the\s+)?(?:ethics|institutional|review|approval|permission|clinical)` — catches IRB lines
+
+Carefully sized the negatives to NOT regress real funding statements like "supported by the same Research Council", "supported by our advisor", "supported by their funding agency". 500-statement clean-train recall sanity check: 89.4% positive coverage retained, 0 negative-pattern false-rejections.
+
+**Train validation (n=4161 clean, floor=11, tightened):** P=0.906 R=0.924 F1=0.915 — vs untightened-floor=11 P=0.852 R=0.931 F1=0.890 → **ΔP +0.054, ΔR −0.007, ΔF1 +0.025**.
+
+**Test validation (n=3580, floor=11, tightened):**
+
+| Bucket | n | Tier 1 P/R/F1 | Tier 2 f=11 untightened | **Tier 2 f=11 tightened** | ΔF1 vs Tier 1 |
+|---|---:|---|---|---|---:|
+| overall | 3580 | 0.878 / 0.906 / **0.892** | 0.859 / 0.896 / 0.877 | 0.901 / 0.886 / **0.894** | **+0.002** |
+| clean | 1045 | 0.880 / 0.930 / 0.905 | 0.844 / 0.921 / 0.881 | 0.904 / 0.914 / **0.909** | **+0.004** |
+| clean_relocated | 339 | 0.902 / 0.906 / 0.904 | 0.898 / 0.896 / 0.897 | 0.927 / 0.888 / **0.907** | **+0.003** |
+| mild | 549 | 0.870 / 0.898 / 0.884 | 0.858 / 0.886 / 0.872 | 0.895 / 0.876 / 0.886 | +0.002 |
+| medium | 549 | 0.875 / 0.900 / 0.887 | 0.852 / 0.890 / 0.870 | 0.888 / 0.876 / 0.882 | −0.005 |
+| heavy | 549 | 0.871 / 0.884 / 0.877 | 0.852 / 0.872 / 0.862 | 0.891 / 0.860 / 0.875 | −0.002 |
+| combined | 549 | 0.869 / 0.898 / 0.883 | 0.860 / 0.892 / 0.876 | 0.902 / 0.878 / **0.890** | **+0.007** |
+
+Aggregate **clean + arxiv-latex** (n=1384, weighted): Tier 1 P=0.885 R=0.924 F1=0.905 vs **Tier 2 tightened+floor=11 P=0.910 R=0.908 F1=0.908** — **ΔP +0.025, ΔR −0.016, ΔF1 +0.003**. The tuned Tier 2 **matches Tier 1 F1 on clean text** while delivering 22.66 docs/sec (4.6× over Tier 1's 4.91).
+
+A small recall drop (−0.5 to −1.5pt) appears on heavily augmented degradation tiers (medium/heavy), where the new auxiliary-verb requirement on the `supported by` pattern misses noise-corrupted "supported by" lines that no longer parse to `was/is/were supported by`. This is acceptable: the prefilter is opt-in and intended for clean text inference.
+
+### Final recommendation
+
+Ship with these defaults when `enable_paragraph_prefilter=True`:
+- `regex_match_score_floor=11.0`
+- Tightened `funding_patterns.yaml` (this PR)
+
+F1 matches Tier 1 (0.908 vs 0.905) on the user-requested clean + arxiv-latex inference scope, at 4.6× the throughput. 14k-doc train cost: $3.86 vs $17.80 baseline — **78% cost reduction with no F1 regression**.
+
+Reports pushed to `adambuttrick/arxiv-funding-statement-retrieval-extractions`: configs `predictions-train-clean-floor11-fp-mining`, `metrics-train-clean-floor11-fp-mining`. Local logs captured but not checked in (large).
 
 ## Reproducibility
 
