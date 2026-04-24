@@ -75,6 +75,27 @@ Per `docs/plans/2026-04-24-tier2-throughput-tuning.md` Task 1.2, we landed a `--
 
 Same failure mode as the six Tier 1 submissions above.
 
+### Fallback run on a100-large
+
+With h200 blocked, we ran the same config on `a100-large` (job `69ebc57cd2c8bd8662bccb6c`) to capture at least one profile datapoint:
+
+```
+[pipeline-profile] wall=89.2s gpu_active=86.4s (97%) gpu_idle=2.1s (2%)
+  post_pool_saturated=79.2s (89%) pre_pool_saturated=77.7s (87%)
+  writer_waiting=89.1s (100%) workers=94
+```
+
+Summary: rows=3580, wall=101.0 s, throughput=**35.46 docs/sec**, gpu=A100-SXM4-80GB, peak_mem=3.40 GB.
+F1: overall **0.895** (P=0.905, R=0.886), clean **0.914**, clean_relocated 0.907 — F1 parity confirmed.
+
+**Acceptance gates (all pass):** profile line present; `gpu_active + gpu_idle = 88.5 s ≈ wall 89.2 s` (within 1% sanity); `gpu_active = 97%` crosses the 50% diagnostic threshold.
+
+**Read:** On A100, the GPU is saturated (97% active, 2% idle) — the opposite of the plan's Phase-1 hypothesis that the GPU is idle ≥80% of the run. Big caveat: the A100 host reports **94 workers** (`cpu_count - 2`) vs **14** on h200. That 6.7× CPU parallelism plausibly explains why the post-stage stops starving the GPU on A100. Relative throughput supports this: 35 docs/sec on A100 vs 50 docs/sec on h200 at the same config — the A100 is bound by how fast its GPU can encode, while h200 at the same batch config finishes encoding earlier and waits on CPU.
+
+This means the **h200 bottleneck profile is still the one we need**; the A100 profile tells us that on a CPU-rich host at this batch size, the GPU is the floor rather than the ceiling. Phase 2 lever selection must wait for an h200 profile.
+
+**Action:** when the h200 pool recovers, rerun with the same invocation (`phase1-profile-tier2` run name). The instrumentation and submit script are unchanged.
+
 Per the tuning plan's non-goals ("H200 CUDA Error 802 infrastructure triage… out of scope. If any Tier 2 Phase 2/3 run fails with Error 802, tuning is paused pending infrastructure recovery"), Phase 1 data capture is paused. The instrumentation code is merged and idle — the next attempt can re-use the identical invocation. When the h200 pool stabilises, resubmit with:
 
 ```
