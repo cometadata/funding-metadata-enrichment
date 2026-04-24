@@ -18,7 +18,12 @@ def _split_into_paragraphs(text: str) -> List[str]:
 
 
 _FUNDING_PREFILTER_REGEX = re.compile(
-    r"\b(fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial)\w*\b",
+    r"\b(fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financ|grate|gratitude|foundation)\w*\b"
+    r"|\b(?:NSF|NSFC|NIH|NASA|ESA|CNES|DOE|ERC|EPSRC|DFG|JSPS|MCIN|AEI|FAPESP|CNPq|JPL|CSIC|CONICET|CONACYT|RFBR|HFSP|JST|MEXT|KAKENHI)\b"
+    r"|\bin\s+(?:the\s+)?(?:framework|scope|context)\s+of\b"
+    r"|\bis\s+part\s+of\s+the\s+(?:project|research|R\+D\+i)\b"
+    r"|\bcarried\s+out\s+(?:within|as|in|during)\b"
+    r"|\b(?:state\s+assignment|госзадания)\b",
     re.IGNORECASE,
 )
 
