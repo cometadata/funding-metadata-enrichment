@@ -232,13 +232,41 @@ End-to-end throughput (full pipeline including rapidfuzz eval): Tier 1 4.91 docs
 - Precision drops 4–7 pts because shrinking the candidate pool from ~300 paragraphs to ~10 (the prefilter result) raises the per-query top-k selection rate from ~1.7% to ~50%. Borderline paragraphs that previously sat outside the top-5 now make the cut and the post-filter `_is_likely_funding_statement` doesn't catch them all.
 - Net F1 cost is 1–4 pts depending on bucket. On the clean+arxiv-latex-extract aggregate, F1 drops 3.2 pts.
 
-**Trade-off:** at $5/hr H200, processing 14,261 train docs costs ~$3.69 with Tier 2 vs ~$17.80 baseline. Whether the 3.2-pt F1 cost is worth a 4.8× speedup depends on the downstream consumer; if recall matters more than precision (e.g. funding-statement recall feeds a downstream pattern-rescue or deduper that tolerates noise), Tier 2 is a clear win. For balanced F1 use cases, consider one of:
+**Trade-off:** at $5/hr H200, processing 14,261 train docs costs ~$3.69 with Tier 2 vs ~$17.80 baseline. Whether the 3.2-pt F1 cost is worth a 4.8× speedup depends on the downstream consumer; if recall matters more than precision (e.g. funding-statement recall feeds a downstream pattern-rescue or deduper that tolerates noise), Tier 2 is a clear win. For balanced F1 use cases, see the precision-recovery work in the next section.
 
-1. **Raise threshold for prefiltered runs**: with ~10 candidates instead of ~300, raising `--threshold` from 10.0 to ~12–14 would prune most of the borderline false positives without hurting recall. Cheap to test.
-2. **Tighten the prefilter**: drop the multi-word phrases (state assignment / framework of / etc.) to recover precision at the cost of ~0.5pt recall.
-3. **Run Tier 2 as a candidate generator + Tier 1 as a verification pass** on the survivors. Complexity tradeoff; only worth it if Tier 2-alone precision is unacceptable.
+### Tier 2 precision recovery via `regex_match_score_floor`
 
-Reports for these runs are in the `cometadata/arxiv-funding-statement-retrieval-extractions` Hub repo (predictions/metrics for `test-tier1-noprefilter` and `test-tier2-prefilter`); local logs were captured but not checked in (large).
+Diagnosed the root cause of the precision drop: the post-filter `_is_likely_funding_statement` accepts any keyword-matching paragraph at score > 3.0. With Tier 2's smaller candidate pool (~10 paragraphs vs ~300), borderline matches make top-k that wouldn't have under Tier 1. Concrete example: doc 8 in the 50-doc sample contains "*anomalies supported by multiple modalities*" — the broad `\bsupport\w*\s+(?:by|from|through)` pattern matches; under Tier 1 this paragraph competes with ~300 others and doesn't make top-5; under Tier 2 it makes top-5 at score 13.23 and is accepted.
+
+**Lever:** new `regex_match_score_floor` parameter on `_is_likely_funding_statement` and `extract_funding_statements` (default 3.0, no behavior change). When raised, the keyword-match acceptance branch requires `score > floor` instead of `score > 3.0`. The score > 14 auto-True branch is unchanged.
+
+**Train sweep (n=2000 docs, train, clean + arxiv-latex-extract subdirs):**
+
+| Floor | overall P | overall R | overall F1 |
+|---:|---:|---:|---:|
+| 3 (default) | 0.868 | 0.902 | 0.884 |
+| 8 | 0.868 | 0.902 | 0.884 (identical — no FPs scored 3–8) |
+| 10 | 0.880 | 0.901 | 0.890 |
+| **11** | **0.887** | **0.896** | **0.892** ← max F1 |
+| 12 | 0.901 | 0.875 | 0.888 |
+| 13 | 0.909 | 0.865 | 0.886 |
+| 14+ | 0.000 | 0.000 | 0.000 (over the cliff: true funding statements rarely score >14, so all `(3, 14]` keyword matches get rejected) |
+
+**Test validation at floor=11 (n=3580 docs):**
+
+| Bucket | n | Tier 1 P/R/F1 | Tier 2 f=3 P/R/F1 | Tier 2 f=11 P/R/F1 | Δ (f=11 vs Tier 1) |
+|---|---:|---|---|---|---|
+| overall | 3580 | 0.878 / 0.906 / 0.892 | 0.834 / 0.907 / 0.869 | 0.859 / 0.896 / 0.877 | −0.019 / −0.010 / −0.015 |
+| clean | 1045 | 0.880 / 0.930 / 0.905 | 0.813 / 0.930 / 0.867 | 0.844 / 0.921 / 0.881 | −0.036 / −0.009 / −0.024 |
+| clean_relocated | 339 | 0.902 / 0.906 / 0.904 | 0.876 / 0.904 / 0.890 | 0.898 / 0.896 / 0.897 | −0.004 / −0.010 / −0.007 |
+
+Aggregate clean + arxiv-latex (n=1384): Tier 1 P=0.885 / R=0.924 / F1=0.905 vs Tier 2 floor=11 P=0.857 / R=0.915 / F1=0.885 — **ΔP=−0.028 ΔR=−0.009 ΔF1=−0.020** (was −0.057/0.000/−0.032 at floor=3, so floor=11 recovers 1.2 pt of the 3.2-pt F1 loss).
+
+Throughput preserved: 22.95 docs/sec (vs 23.70 at floor=3 — basically identical, the floor only changes a Python branch, not GPU work). 14k-doc train cost: ~$3.81 (vs ~$3.69 at floor=3). p50 latency 37 ms.
+
+**Recommendation:** ship Tier 2 with `regex_match_score_floor=11.0` as the default when `enable_paragraph_prefilter=True`. The 1.5pt F1 cost vs Tier 1 is the floor of what this single-lever tune can buy; further recovery would need pattern-set tightening (e.g., replacing the broad `\bsupport\w*\s+(?:by|from|through)` with funding-entity-specific variants) or a two-pass architecture.
+
+Reports for these runs are in the `cometadata/arxiv-funding-statement-retrieval-extractions` Hub repo (predictions/metrics for `test-tier1-noprefilter`, `test-tier2-prefilter`, `test-tier2-floor11`); local logs were captured but not checked in (large).
 
 ## Reproducibility
 
