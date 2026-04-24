@@ -93,6 +93,38 @@ fn read_string_cell(
     ))
 }
 
+/// Like [`read_string_cell`] but treats null cells as empty strings instead of
+/// erroring. Used for columns that are nullable in the upstream schema —
+/// notably `text`, which is `null` whenever extraction failed (`status != "ok"`).
+/// We still want to read the row so the pipeline's `status == "ok"` filter can
+/// drop it; an empty `text` is harmless because the gate returns `false` on
+/// empty input.
+fn read_optional_string_cell(
+    col: &dyn Array,
+    row: usize,
+    column_label: &str,
+    path: &Path,
+) -> Result<String> {
+    if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+        if arr.is_null(row) {
+            return Ok(String::new());
+        }
+        return Ok(arr.value(row).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<LargeStringArray>() {
+        if arr.is_null(row) {
+            return Ok(String::new());
+        }
+        return Ok(arr.value(row).to_string());
+    }
+    Err(anyhow!(
+        "column `{}` in {} has unsupported type {:?} (expected Utf8 or LargeUtf8)",
+        column_label,
+        path.display(),
+        col.data_type()
+    ))
+}
+
 /// Iterator that walks a `ParquetRecordBatchReader`, flattening the current
 /// `RecordBatch` into individual [`InputRow`] values and fetching the next
 /// batch when the current one is exhausted.
@@ -142,7 +174,10 @@ impl ShardRowIter {
             "arxiv_id",
             &self.path,
         )?;
-        let text = read_string_cell(
+        // `text` is nullable in real shards (null when `status != "ok"`).
+        // Tolerate null here; the pipeline filters by `status` so empty text
+        // for a non-ok row never reaches the gate.
+        let text = read_optional_string_cell(
             batch.column(self.text_col).as_ref(),
             row,
             "text",
@@ -559,5 +594,37 @@ mod tests {
             "This work was supported by NIH grant R01-12345."
         );
         assert_eq!(rows[0].status, "ok");
+    }
+
+    /// Regression for the null-text case: real shards have `text: null`
+    /// whenever extraction failed (`status != "ok"`). The reader must yield
+    /// these rows with empty text rather than erroring, so the pipeline can
+    /// drop them via the `status == "ok"` filter.
+    #[test]
+    fn reader_tolerates_null_text_for_failed_rows() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("input_null_text.parquet");
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("arxiv_id", DataType::Utf8, false),
+            Field::new("text", DataType::LargeUtf8, true),
+            Field::new("status", DataType::Utf8, false),
+        ]));
+        let arxiv =
+            Arc::new(StringArray::from(vec!["2401.00001", "2401.00002"])) as Arc<dyn Array>;
+        let text = Arc::new(LargeStringArray::from(vec![
+            Some("This work was supported by the NSF."),
+            None,
+        ])) as Arc<dyn Array>;
+        let status = Arc::new(StringArray::from(vec!["ok", "error"])) as Arc<dyn Array>;
+        write_input_parquet(&path, schema, vec![arxiv, text, status]).unwrap();
+
+        let iter = read_shard_rows(&path).unwrap();
+        let rows: Vec<InputRow> = iter.collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].status, "ok");
+        assert_eq!(rows[0].text, "This work was supported by the NSF.");
+        assert_eq!(rows[1].status, "error");
+        assert_eq!(rows[1].text, "");
     }
 }
