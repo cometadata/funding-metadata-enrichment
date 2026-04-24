@@ -167,6 +167,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Comma-separated JSONL sub-dirs to fold together into one split.",
     )
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--num-shards", type=int, default=1,
+                        help="Split the loaded split into N equal shards (used with --shard-index for multi-GPU sharded runs).")
+    parser.add_argument("--shard-index", type=int, default=0,
+                        help="Which shard to process (0..num_shards-1).")
     parser.add_argument("--exclude-augmented", action="store_true",
                         help="Drop rows with augmentation != None (keep only clean + clean_relocated). For tuning on un-degraded text.")
 
@@ -722,6 +726,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
         logger.info("capped to %d rows via --max-samples", len(ds))
+    if args.num_shards > 1:
+        before = len(ds)
+        ds = ds.shard(num_shards=args.num_shards, index=args.shard_index, contiguous=True)
+        logger.info("sharded %d -> %d rows (shard %d of %d)",
+                    before, len(ds), args.shard_index, args.num_shards)
 
     predictions_rows, latencies_by_bucket, total_seconds = run_extraction(args, ds)
     metrics_rows = compute_metrics(
