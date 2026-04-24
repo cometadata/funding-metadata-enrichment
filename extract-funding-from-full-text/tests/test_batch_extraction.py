@@ -15,6 +15,7 @@ from funding_statement_extractor.statements.batch_extraction import (
     _post_task,
     _length_sort_permutation,
     _apply_inverse_permutation,
+    _PipelineProfile,
 )
 from funding_statement_extractor.statements.extraction import (
     SemanticExtractionService,
@@ -579,3 +580,116 @@ def test_batch_engine_resident_memory_bounded_under_slow_consumer(monkeypatch):
         growth_mb = (rss_after - rss_before) / 1024.0
     # Soft check: RSS growth is bounded (allow 200 MB headroom for normal jitter)
     assert growth_mb < 200, f"resident memory grew {growth_mb} MB under bounded queues"
+
+
+def test_pipeline_profile_disabled_is_noop():
+    prof = _PipelineProfile(enabled=False, workers=4)
+    prof.add_gpu_active(1.23)
+    prof.add_gpu_idle(4.56)
+    prof.add_writer_waiting(0.1)
+    for _ in range(4):
+        prof.pre_inc()
+        prof.post_inc()
+    # Nothing should have accumulated; no state changes, no lock held.
+    assert prof.gpu_active_s == 0.0
+    assert prof.gpu_idle_s == 0.0
+    assert prof.writer_waiting_s == 0.0
+    assert prof.pre_pool_saturated_s == 0.0
+    assert prof.post_pool_saturated_s == 0.0
+    # Internal counters stay at 0 in the no-op path.
+    assert prof._pre_in_flight == 0
+    assert prof._post_in_flight == 0
+
+
+def test_pipeline_profile_records_saturation_edge():
+    import time as _time
+    prof = _PipelineProfile(enabled=True, workers=2)
+    # Two in-flight -> enters saturation. One completes -> exits.
+    prof.post_inc()
+    assert prof._post_sat_start is None
+    prof.post_inc()
+    assert prof._post_sat_start is not None
+    _time.sleep(0.05)
+    prof.post_dec()
+    assert prof._post_sat_start is None
+    assert prof.post_pool_saturated_s >= 0.04
+    # Adding more past saturation exit shouldn't double-count.
+    prof.post_dec()
+    assert prof._post_in_flight == 0
+
+
+def test_pipeline_profile_scalar_adds_accumulate():
+    prof = _PipelineProfile(enabled=True, workers=2)
+    prof.add_gpu_active(0.5)
+    prof.add_gpu_active(0.25)
+    prof.add_gpu_idle(2.0)
+    prof.add_writer_waiting(0.1)
+    assert prof.gpu_active_s == 0.75
+    assert prof.gpu_idle_s == 2.0
+    assert prof.writer_waiting_s == 0.1
+
+
+def test_pipeline_profile_summary_line_shape():
+    prof = _PipelineProfile(enabled=True, workers=8)
+    prof.add_gpu_active(3.2)
+    prof.add_gpu_idle(65.0)
+    prof.add_writer_waiting(0.1)
+    # Fake saturation accumulation without the edge machinery.
+    prof.post_pool_saturated_s = 40.0
+    prof.pre_pool_saturated_s = 8.0
+    line = prof.summary_line(71.0)
+    assert line.startswith("[pipeline-profile]")
+    for field in ("wall=71.0s", "gpu_active=3.2s", "gpu_idle=65.0s",
+                  "post_pool_saturated=40.0s", "pre_pool_saturated=8.0s",
+                  "writer_waiting=0.1s", "workers=8"):
+        assert field in line, f"missing {field!r} in {line!r}"
+    # Percentages present for each timer.
+    assert "(5%)" in line or "(4%)" in line   # gpu_active ~= 3.2/71
+    assert "(92%)" in line or "(91%)" in line  # gpu_idle
+
+
+def test_pipeline_profile_emits_summary_when_enabled(monkeypatch, caplog):
+    import logging
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+    docs = [DocPayload(doc_id=f"d{i}", text="Para A.\n\nNo funding here.\n\nPara C.")
+            for i in range(3)]
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool",
+                        lambda workers, init, args: ThreadPool(processes=workers))
+
+    caplog.set_level(logging.INFO, logger=bx.logger.name)
+    results = list(bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=4, encode_batch_size=2, workers=2, queue_depth=8,
+        enable_paragraph_prefilter=False,
+        profile_pipeline=True,
+    ))
+    assert len(results) == 3
+    assert any("[pipeline-profile]" in rec.getMessage() for rec in caplog.records), \
+        "expected [pipeline-profile] log line when profile_pipeline=True"
+
+
+def test_pipeline_profile_silent_when_disabled(monkeypatch, caplog):
+    import logging
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+    docs = [DocPayload(doc_id=f"d{i}", text="Para A.\n\nNo funding here.\n\nPara C.")
+            for i in range(3)]
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool",
+                        lambda workers, init, args: ThreadPool(processes=workers))
+
+    caplog.set_level(logging.INFO, logger=bx.logger.name)
+    list(bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=4, encode_batch_size=2, workers=2, queue_depth=8,
+        enable_paragraph_prefilter=False,
+    ))
+    assert not any("[pipeline-profile]" in rec.getMessage() for rec in caplog.records)

@@ -28,6 +28,102 @@ logger = logging.getLogger(__name__)
 _EOS = object()    # End-of-stream sentinel
 
 
+class _PipelineProfile:
+    """Thread-safe wall-clock accumulator for pipeline phase shares.
+
+    All recording methods are no-ops when ``enabled`` is False; the early return
+    happens before any lock acquisition so the hot path pays essentially
+    nothing. Only turn this on for diagnostic runs — the lock contention would
+    contaminate throughput measurements.
+    """
+
+    __slots__ = (
+        "enabled", "workers", "_lock",
+        "gpu_active_s", "gpu_idle_s", "writer_waiting_s",
+        "_pre_in_flight", "_pre_sat_start", "pre_pool_saturated_s",
+        "_post_in_flight", "_post_sat_start", "post_pool_saturated_s",
+    )
+
+    def __init__(self, enabled: bool = False, workers: int = 0) -> None:
+        self.enabled = enabled
+        self.workers = workers
+        self._lock = threading.Lock()
+        self.gpu_active_s = 0.0
+        self.gpu_idle_s = 0.0
+        self.writer_waiting_s = 0.0
+        self._pre_in_flight = 0
+        self._pre_sat_start: Optional[float] = None
+        self.pre_pool_saturated_s = 0.0
+        self._post_in_flight = 0
+        self._post_sat_start: Optional[float] = None
+        self.post_pool_saturated_s = 0.0
+
+    def add_gpu_active(self, dt: float) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self.gpu_active_s += dt
+
+    def add_gpu_idle(self, dt: float) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self.gpu_idle_s += dt
+
+    def add_writer_waiting(self, dt: float) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self.writer_waiting_s += dt
+
+    def pre_inc(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._pre_in_flight += 1
+            if self._pre_in_flight == self.workers and self._pre_sat_start is None:
+                self._pre_sat_start = time.perf_counter()
+
+    def pre_dec(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            if self._pre_in_flight == self.workers and self._pre_sat_start is not None:
+                self.pre_pool_saturated_s += time.perf_counter() - self._pre_sat_start
+                self._pre_sat_start = None
+            self._pre_in_flight -= 1
+
+    def post_inc(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._post_in_flight += 1
+            if self._post_in_flight == self.workers and self._post_sat_start is None:
+                self._post_sat_start = time.perf_counter()
+
+    def post_dec(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            if self._post_in_flight == self.workers and self._post_sat_start is not None:
+                self.post_pool_saturated_s += time.perf_counter() - self._post_sat_start
+                self._post_sat_start = None
+            self._post_in_flight -= 1
+
+    def summary_line(self, wall_s: float) -> str:
+        def pct(x: float) -> int:
+            return int(round(100.0 * x / wall_s)) if wall_s > 0 else 0
+        return (
+            f"[pipeline-profile] wall={wall_s:.1f}s "
+            f"gpu_active={self.gpu_active_s:.1f}s ({pct(self.gpu_active_s)}%) "
+            f"gpu_idle={self.gpu_idle_s:.1f}s ({pct(self.gpu_idle_s)}%) "
+            f"post_pool_saturated={self.post_pool_saturated_s:.1f}s ({pct(self.post_pool_saturated_s)}%) "
+            f"pre_pool_saturated={self.pre_pool_saturated_s:.1f}s ({pct(self.pre_pool_saturated_s)}%) "
+            f"writer_waiting={self.writer_waiting_s:.1f}s ({pct(self.writer_waiting_s)}%) "
+            f"workers={self.workers}"
+        )
+
+
 _WORKER_COMPILED_POS_PATTERNS: Optional[List[Pattern]] = None
 _WORKER_COMPILED_NEG_PATTERNS: Optional[List[Pattern]] = None
 
@@ -410,6 +506,7 @@ def extract_funding_statements_batch(
     workers: Optional[int] = None,
     queue_depth: int = 128,
     dtype: str = "auto",
+    profile_pipeline: bool = False,
 ) -> Iterator[BatchResult]:
     """Pipelined batch extractor. Yields BatchResult per document in completion order."""
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -418,6 +515,8 @@ def extract_funding_statements_batch(
         regex_match_score_floor = 11.0 if enable_paragraph_prefilter else 3.0
     if workers is None:
         workers = max(2, (os.cpu_count() or 4) - 2)
+
+    profile = _PipelineProfile(enabled=profile_pipeline, workers=workers)
 
     model = _get_or_load_model(model_name)
     if dtype not in ("auto", "fp32"):
@@ -469,11 +568,13 @@ def extract_funding_statements_batch(
                 if shutdown.is_set():
                     return
                 def cb(result, _doc=doc):
+                    profile.pre_dec()
                     try:
                         pre_out.put(result, block=True)
                     except Exception:
                         logger.exception("pre callback put failed")
                 def err_cb(exc, _doc=doc):
+                    profile.pre_dec()
                     err_pre = _PreOut(
                         doc=_doc, paragraphs=[], original_indices=[], full_paragraphs=[],
                         enqueue_ts=time.monotonic(), pre_ms=0.0,
@@ -483,6 +584,7 @@ def extract_funding_statements_batch(
                         pre_out.put(err_pre, block=True)
                     except Exception:
                         logger.exception("pre err_cb put failed")
+                profile.pre_inc()
                 ar = pool.apply_async(
                     _pre_task, (doc,),
                     {"enable_paragraph_prefilter": enable_paragraph_prefilter},
@@ -497,13 +599,17 @@ def extract_funding_statements_batch(
     def gpu_consumer():
         try:
             while True:
+                t_drain = time.perf_counter()
                 batch, eos = _drain_until(pre_out, target_paragraphs=paragraphs_per_batch)
+                profile.add_gpu_idle(time.perf_counter() - t_drain)
                 if batch:
                     try:
+                        t_gpu = time.perf_counter()
                         post_items = _run_gpu_pass(
                             batch, model, query_emb_padded, query_names,
                             encode_batch_size=encode_batch_size, top_k=top_k,
                         )
+                        profile.add_gpu_active(time.perf_counter() - t_gpu)
                         for item in post_items:
                             post_in.put(item, block=True)
                     except Exception as exc:
@@ -543,11 +649,13 @@ def extract_funding_statements_batch(
                 if shutdown.is_set():
                     return
                 def cb(result, _item=item):
+                    profile.post_dec()
                     try:
                         done.put(result, block=True)
                     except Exception:
                         logger.exception("post callback put failed")
                 def err_cb(exc, _item=item):
+                    profile.post_dec()
                     try:
                         done.put(BatchResult(
                             doc_id=_item.pre.doc.doc_id, statements=[],
@@ -557,6 +665,7 @@ def extract_funding_statements_batch(
                         ), block=True)
                     except Exception:
                         logger.exception("post err_cb put failed")
+                profile.post_inc()
                 ar = pool.apply_async(
                     _post_task_in_worker, (item,),
                     {"top_k": top_k, "threshold": threshold,
@@ -574,9 +683,12 @@ def extract_funding_statements_batch(
         t.start()
         threads.append(t)
 
+    t_run_start = time.perf_counter()
     try:
         while True:
+            t_wait = time.perf_counter()
             result = done.get(block=True)
+            profile.add_writer_waiting(time.perf_counter() - t_wait)
             if result is _EOS:
                 return
             yield result
@@ -584,6 +696,9 @@ def extract_funding_statements_batch(
         shutdown.set()
         raise
     finally:
+        if profile_pipeline:
+            wall_s = time.perf_counter() - t_run_start
+            logger.info("%s", profile.summary_line(wall_s))
         shutdown.set()
         # Drainer thread: during shutdown, pool workers and dispatcher threads
         # may be blocked on queue.put(block=True) because nothing is consuming

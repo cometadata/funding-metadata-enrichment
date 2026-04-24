@@ -242,6 +242,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="CPU workers for the pre/post pool. Default: cpu_count - 2.",
     )
     parser.add_argument(
+        "--profile-pipeline",
+        action="store_true",
+        help="Enable wall-clock pipeline phase-share profiling in the batch "
+             "engine. Adds a [pipeline-profile] log line at end of run. Adds "
+             "lock contention on the hot path — leave off for throughput sweeps.",
+    )
+    parser.add_argument(
         "--allow-cpu",
         action="store_true",
         help="Skip the CUDA-required probe. Intended for Mac byte-identity "
@@ -454,6 +461,7 @@ def _run_extraction_batch(args: argparse.Namespace, ds, queries: Dict[str, str])
         workers=args.engine_workers,
         queue_depth=args.queue_depth,
         dtype=args.dtype,
+        profile_pipeline=args.profile_pipeline,
     ):
         meta = result.metadata or {}
         bucket = meta.get("bucket", "unknown")
