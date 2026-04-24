@@ -636,6 +636,7 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tempfile",
  "thiserror",

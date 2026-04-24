@@ -1,0 +1,252 @@
+[
+  {
+    "paragraph": "This work was supported by the NSF under grant number AST-1234567.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "We acknowledge funding from the European Research Council (ERC) under grant 101002811.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This research was funded by JSPS KAKENHI Grant Number JP18K12345.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "J.D. acknowledges financial support from the Simons Foundation.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Funding: This work was supported by NASA grant 80NSSC19K0001.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "The authors thank the DFG for funding under project number 12345678.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This study received funding from the European Union's Horizon 2020 research and innovation programme under grant agreement No 000000.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Work supported in part by DOE grant DE-FG02-91ER40628.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This research was supported by a fellowship from the Alfred P. Sloan Foundation.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "We are grateful for the hospitality of the Aspen Center for Physics, which is supported by NSF grant PHY-2210452.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "The author gratefully acknowledges the support of the EPSRC through grant EP/X000000/1.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This work is part of the research programme supported by CNPq.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Scholarship recipient under the Chinese Scholarship Council (CSC).",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Funding provided by the Max Planck Society.",
+    "expected": false,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Carried out within the framework of the state assignment of the Russian Academy of Sciences.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This research was supported in part by CONACYT fellowship 987654.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Financially supported by FAPESP grant 2020/00000-0.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "Award #PHY-1912345 from the National Science Foundation.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "This project has received funding from AEI/MCIN under grant PID2020-117123RB-I00.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "We thank CSIC for providing computational facilities and support.",
+    "expected": true,
+    "category": "positive"
+  },
+  {
+    "paragraph": "We present a new method for analyzing galaxy clusters.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The quantum harmonic oscillator is a model studied in undergraduate physics.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "Figure 3 shows the distribution of masses as a function of redshift.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "Our numerical simulations were carried out using the MPI framework.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The ratio of these quantities is given in Eq. (12).",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "In this paper we propose a novel architecture.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "These results are consistent with theoretical predictions.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The observations were taken on three consecutive nights.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "We used Python and numpy for the numerical work.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "Data is available from the authors on reasonable request.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The temperature profile is shown in Figure 5.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "A review of the literature is presented in the next section.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "We adopt the cosmology from Planck 2018 results.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The mean value was computed as the arithmetic average.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The dataset consists of 10,000 simulated trajectories.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "Our model predicts a correlation between X and Y.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "We refer the reader to Section 3 for the derivation.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "This is shown on the right panel of Figure 2.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "Thanks to all the co-authors for their feedback.",
+    "expected": false,
+    "category": "negative"
+  },
+  {
+    "paragraph": "These predictions are supported by our experimental measurements.",
+    "expected": true,
+    "category": "negative"
+  },
+  {
+    "paragraph": "The Higgs mechanism is supported by theoretical arguments and experimental data.",
+    "expected": true,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "The proof is supported by Lemma 3.2.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "Granted by the institutional review board under protocol 12345.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "The claim is supported by the equation above.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "Work done at CERN.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "This result is supported by several observations and simulations.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "Our approach is supported by recent work.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "The conclusion is supported by both theoretical and numerical evidence.",
+    "expected": false,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "Hospitality of the host institution is gratefully acknowledged.",
+    "expected": true,
+    "category": "hard_negative"
+  },
+  {
+    "paragraph": "The framework of relativity is well established.",
+    "expected": false,
+    "category": "hard_negative"
+  }
+]
