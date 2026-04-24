@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use arrow_array::{Array, RecordBatch, StringArray, UInt32Array};
+use arrow_array::{Array, LargeStringArray, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::arrow::{ArrowWriter, ProjectionMask};
@@ -48,6 +48,49 @@ fn column_index(schema: &Schema, name: &str, path: &Path) -> Result<usize> {
             name
         )
     })
+}
+
+/// Read a string cell from an arrow array, transparently handling both
+/// `Utf8` (i32 offsets, [`StringArray`]) and `LargeUtf8` (i64 offsets,
+/// [`LargeStringArray`]). Real shards in
+/// `cometadata/arxiv-latex-extract-full-text` use `LargeUtf8` for the `text`
+/// column, so a single-type downcast (e.g. only `StringArray`) silently fails
+/// for every row. Callers should funnel any string column read through this
+/// helper to stay defensive against future schema variations.
+fn read_string_cell(
+    col: &dyn Array,
+    row: usize,
+    column_label: &str,
+    path: &Path,
+) -> Result<String> {
+    if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+        if arr.is_null(row) {
+            return Err(anyhow!(
+                "null `{}` at row {} in {}",
+                column_label,
+                row,
+                path.display()
+            ));
+        }
+        return Ok(arr.value(row).to_string());
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<LargeStringArray>() {
+        if arr.is_null(row) {
+            return Err(anyhow!(
+                "null `{}` at row {} in {}",
+                column_label,
+                row,
+                path.display()
+            ));
+        }
+        return Ok(arr.value(row).to_string());
+    }
+    Err(anyhow!(
+        "column `{}` in {} has unsupported type {:?} (expected Utf8 or LargeUtf8)",
+        column_label,
+        path.display(),
+        col.data_type()
+    ))
 }
 
 /// Iterator that walks a `ParquetRecordBatchReader`, flattening the current
@@ -90,63 +133,32 @@ impl ShardRowIter {
         let batch = self.current.as_ref().expect("row_from_current called with no current batch");
         let row = self.row_cursor;
 
-        let arxiv_arr = batch
-            .column(self.arxiv_col)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                anyhow!(
-                    "column `arxiv_id` is not a utf8 StringArray in {}",
-                    self.path.display()
-                )
-            })?;
-        let text_arr = batch
-            .column(self.text_col)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                anyhow!(
-                    "column `text` is not a utf8 StringArray in {}",
-                    self.path.display()
-                )
-            })?;
-        let status_arr = batch
-            .column(self.status_col)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                anyhow!(
-                    "column `status` is not a utf8 StringArray in {}",
-                    self.path.display()
-                )
-            })?;
-
-        if arxiv_arr.is_null(row) {
-            return Err(anyhow!(
-                "null `arxiv_id` at row {} in {}",
-                row,
-                self.path.display()
-            ));
-        }
-        if status_arr.is_null(row) {
-            return Err(anyhow!(
-                "null `status` at row {} in {}",
-                row,
-                self.path.display()
-            ));
-        }
-        if text_arr.is_null(row) {
-            return Err(anyhow!(
-                "null `text` at row {} in {}",
-                row,
-                self.path.display()
-            ));
-        }
+        // Funnel every string column through `read_string_cell` so we
+        // transparently accept both `Utf8` and `LargeUtf8` (real shards have
+        // `text: LargeUtf8`). Null checks happen inside the helper.
+        let arxiv_id = read_string_cell(
+            batch.column(self.arxiv_col).as_ref(),
+            row,
+            "arxiv_id",
+            &self.path,
+        )?;
+        let text = read_string_cell(
+            batch.column(self.text_col).as_ref(),
+            row,
+            "text",
+            &self.path,
+        )?;
+        let status = read_string_cell(
+            batch.column(self.status_col).as_ref(),
+            row,
+            "status",
+            &self.path,
+        )?;
 
         Ok(InputRow {
-            arxiv_id: arxiv_arr.value(row).to_string(),
-            text: text_arr.value(row).to_string(),
-            status: status_arr.value(row).to_string(),
+            arxiv_id,
+            text,
+            status,
         })
     }
 }
@@ -320,25 +332,9 @@ pub fn read_candidate_arxiv_ids(path: &Path) -> Result<Vec<String>> {
         let batch = batch_res.with_context(|| {
             format!("reading batch from candidate parquet {}", path.display())
         })?;
-        let arr = batch
-            .column(arxiv_col)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                anyhow!(
-                    "`arxiv_id` column is not utf8 StringArray in {}",
-                    path.display()
-                )
-            })?;
+        let arr = batch.column(arxiv_col);
         for i in 0..arr.len() {
-            if arr.is_null(i) {
-                return Err(anyhow!(
-                    "null `arxiv_id` at row {} in {}",
-                    i,
-                    path.display()
-                ));
-            }
-            out.push(arr.value(i).to_string());
+            out.push(read_string_cell(arr.as_ref(), i, "arxiv_id", path)?);
         }
     }
     Ok(out)
@@ -464,6 +460,44 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].arxiv_id, "2401.00001");
         assert_eq!(rows[0].text, "This work was supported by the NSF.");
+        assert_eq!(rows[0].status, "ok");
+    }
+
+    /// Regression for C1: real shards in
+    /// `cometadata/arxiv-latex-extract-full-text` use `LargeUtf8` for the
+    /// `text` column, which is backed by [`LargeStringArray`] (i64 offsets)
+    /// rather than [`StringArray`] (i32 offsets). A naive `downcast_ref::
+    /// <StringArray>` on those columns silently returns `None` and the
+    /// reader errors on every row. Defensively we also test `arxiv_id` as
+    /// `LargeUtf8` so a future shard variant doesn't regress us either.
+    #[test]
+    fn reader_reads_full_row_with_large_utf8_text() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("input_large_utf8.parquet");
+
+        // `arxiv_id` and `text` as LargeUtf8 — the bug was that text in
+        // particular regressed; arxiv_id is included to lock down the
+        // defensive coverage on every string column.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("arxiv_id", DataType::LargeUtf8, false),
+            Field::new("text", DataType::LargeUtf8, false),
+            Field::new("status", DataType::Utf8, false),
+        ]));
+        let arxiv = Arc::new(LargeStringArray::from(vec!["2401.00001"])) as Arc<dyn Array>;
+        let text = Arc::new(LargeStringArray::from(vec![
+            "This work was supported by the NSF (LargeUtf8).",
+        ])) as Arc<dyn Array>;
+        let status = Arc::new(StringArray::from(vec!["ok"])) as Arc<dyn Array>;
+        write_input_parquet(&path, schema, vec![arxiv, text, status]).unwrap();
+
+        let iter = read_shard_rows(&path).unwrap();
+        let rows: Vec<InputRow> = iter.collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].arxiv_id, "2401.00001");
+        assert_eq!(
+            rows[0].text,
+            "This work was supported by the NSF (LargeUtf8)."
+        );
         assert_eq!(rows[0].status, "ok");
     }
 }
