@@ -529,17 +529,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.run_name = f"{args.split}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     logger.info("run_name=%s", args.run_name)
 
-    try:
-        import torch
+    import torch
 
-        logger.info(
-            "torch=%s cuda=%s device=%s",
-            torch.__version__,
-            torch.cuda.is_available(),
-            torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+    cuda_ok = False
+    for attempt in range(30):
+        try:
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                cuda_ok = True
+                break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cuda probe attempt %d failed: %s", attempt, exc)
+        time.sleep(1)
+    if not cuda_ok:
+        logger.error(
+            "CUDA not available after 30s wait — refusing to fall back to CPU "
+            "(would take ~14h on h200 host CPU). Aborting."
         )
-    except Exception as exc:
-        logger.warning("torch probe failed: %s", exc)
+        return 2
+
+    logger.info(
+        "torch=%s cuda=%s device=%s",
+        torch.__version__,
+        torch.cuda.is_available(),
+        torch.cuda.get_device_name(0),
+    )
 
     subdirs = [s.strip() for s in args.subdirs.split(",") if s.strip()]
     ds = load_merged_split(args.dataset, args.split, subdirs)
