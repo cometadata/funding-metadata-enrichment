@@ -186,6 +186,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--enable-pattern-rescue", action="store_true")
     parser.add_argument("--enable-post-filter", action="store_true")
     parser.add_argument("--enable-paragraph-prefilter", action="store_true")
+    parser.add_argument("--regex-match-score-floor", type=float, default=3.0,
+                        help="Score floor for the keyword-match branch of _is_likely_funding_statement (default 3.0). Raise for stricter precision when prefilter is on.")
     parser.add_argument("--queries-file", default=None)
 
     parser.add_argument(
@@ -308,6 +310,7 @@ def run_extraction(args: argparse.Namespace, ds) -> Tuple[List[Dict[str, Any]], 
             threshold=args.threshold,
             batch_size=args.batch_size,
             enable_paragraph_prefilter=args.enable_paragraph_prefilter,
+            regex_match_score_floor=args.regex_match_score_floor,
         )
         if args.enable_pattern_rescue:
             rescued = service.rescue_by_patterns(text, statements)
@@ -460,6 +463,7 @@ def build_run_config(args: argparse.Namespace, n_rows: int, total_seconds: float
         "enable_pattern_rescue": args.enable_pattern_rescue,
         "enable_post_filter": args.enable_post_filter,
         "enable_paragraph_prefilter": args.enable_paragraph_prefilter,
+        "regex_match_score_floor": args.regex_match_score_floor,
         "dtype": args.dtype,
         "similarity_threshold": args.similarity_threshold,
         "dataset": args.dataset,

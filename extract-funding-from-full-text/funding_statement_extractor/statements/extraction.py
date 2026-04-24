@@ -167,6 +167,7 @@ class SemanticExtractionService:
         threshold: float,
         compiled_patterns: List[Pattern],
         negative_patterns: List[Pattern],
+        regex_match_score_floor: float = 3.0,
     ) -> bool:
         if score > 14.0:
             return True
@@ -181,13 +182,12 @@ class SemanticExtractionService:
                               for pattern in compiled_patterns)
 
         if has_regex_match:
-            if score > 3.0:
-                return True
+            return score > regex_match_score_floor
 
         if score < threshold:
             return False
 
-        return has_regex_match
+        return False
 
     @staticmethod
     def _extract_funding_sentences(paragraph: str) -> List[str]:
@@ -312,6 +312,7 @@ class SemanticExtractionService:
         patterns_file: Optional[str] = None,
         custom_config_dir: Optional[str] = None,
         enable_paragraph_prefilter: bool = False,
+        regex_match_score_floor: float = 3.0,
     ) -> List[FundingStatement]:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         model = self._get_model(model_name)
@@ -366,7 +367,8 @@ class SemanticExtractionService:
                 paragraph = paragraphs[para_id]
 
                 if self._is_likely_funding_statement(
-                    paragraph, score, threshold, compiled_patterns, negative_patterns
+                    paragraph, score, threshold, compiled_patterns, negative_patterns,
+                    regex_match_score_floor=regex_match_score_floor,
                 ):
                     if self._should_extract_full_paragraph(paragraph, score):
                         statement_text = paragraph.strip()
@@ -496,6 +498,7 @@ def extract_funding_statements(
     custom_config_dir: Optional[str] = None,
     enable_pattern_rescue: bool = False,
     enable_paragraph_prefilter: bool = False,
+    regex_match_score_floor: float = 3.0,
 ) -> List[FundingStatement]:
     statements = _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
         queries=queries,
@@ -508,6 +511,7 @@ def extract_funding_statements(
         patterns_file=patterns_file,
         custom_config_dir=custom_config_dir,
         enable_paragraph_prefilter=enable_paragraph_prefilter,
+        regex_match_score_floor=regex_match_score_floor,
     )
 
     if enable_pattern_rescue and content is not None:
