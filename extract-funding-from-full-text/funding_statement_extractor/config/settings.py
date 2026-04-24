@@ -39,11 +39,17 @@ class ProcessingSettings:
 
 @dataclass
 class RuntimeSettings:
-    batch_size: int = 10
+    batch_size: int = 50
     workers: Optional[int] = None
     resume: bool = False
     force: bool = False
     verbose: bool = False
+    legacy_engine: bool = False
+    paragraphs_per_batch: int = 4096
+    encode_batch_size: int = 512
+    queue_depth: int = 128
+    retry_failed: bool = False
+    dtype: str = "auto"
 
 
 @dataclass

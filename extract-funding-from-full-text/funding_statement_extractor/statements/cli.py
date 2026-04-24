@@ -69,8 +69,21 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--enable-post-filter", action="store_true", help="Enable post-filtering for precision recovery")
     parser.add_argument("--enable-paragraph-prefilter", action="store_true", help="Pre-filter paragraphs by funding keywords before encoding (~6-9x speedup, may affect recall)")
 
-    parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
+    parser.add_argument("--batch-size", type=int, default=50, help="Number of documents between fsync/checkpoint flushes (default: 50)")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (auto-detected if not specified)")
+
+    parser.add_argument("--legacy-engine", action="store_true",
+                        help="Use the per-doc ProcessPoolExecutor loop instead of the batch engine.")
+    parser.add_argument("--paragraphs-per-batch", type=int, default=4096,
+                        help="Pipeline batch size (paragraphs) for the GPU consumer.")
+    parser.add_argument("--encode-batch-size", type=int, default=512,
+                        help="Sub-batch size passed to model.encode.")
+    parser.add_argument("--queue-depth", type=int, default=128,
+                        help="Inter-stage queue depth in the batch engine.")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Re-process docs marked failed in the checkpoint.")
+    parser.add_argument("--dtype", choices=["auto", "fp32", "fp16", "bf16"], default="auto",
+                        help="Model dtype for the batch engine (default: auto).")
 
     parser.add_argument("--checkpoint-file", help="Checkpoint file for saving progress")
     parser.add_argument("--resume", action="store_true", help="Resume from previous checkpoint")
@@ -112,6 +125,12 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             resume=args.resume,
             force=args.force,
             verbose=args.verbose,
+            legacy_engine=args.legacy_engine,
+            paragraphs_per_batch=args.paragraphs_per_batch,
+            encode_batch_size=args.encode_batch_size,
+            queue_depth=args.queue_depth,
+            retry_failed=args.retry_failed,
+            dtype=args.dtype,
         ),
         config_paths=ConfigPaths(
             queries_file=Path(args.queries) if args.queries else None,
@@ -190,7 +209,11 @@ class FundingExtractorApp:
         self.config = config
         self.queries = queries
 
-    def run(self) -> None:
+    def _prepare_run(self) -> Optional[Dict[str, object]]:
+        """Shared setup: input detection, checkpoint load, document iterator, results init.
+
+        Returns a dict of run state, or None if there is nothing to do.
+        """
         cfg = self.config
         input_format = determine_input_format(cfg.input.path, cfg.input.input_format)
         cfg.input.input_format = input_format
@@ -200,6 +223,19 @@ class FundingExtractorApp:
         checkpoint_data = checkpoint_repo.load(resume=resume_checkpoint)
         checkpoint_data.setdefault("processed_files", {})
         processed_lookup = checkpoint_data.get("processed_files", {})
+
+        # --retry-failed: remove failed entries from the lookup so they will be
+        # re-processed by the iterator below.
+        if cfg.runtime.retry_failed and processed_lookup:
+            retry_hashes = [
+                h for h, meta in processed_lookup.items()
+                if isinstance(meta, dict) and meta.get("status") == "failed"
+            ]
+            for h in retry_hashes:
+                processed_lookup.pop(h, None)
+            if retry_hashes:
+                print(f"Retrying {len(retry_hashes)} previously failed documents")
+
         if resume_checkpoint:
             processed_total = len(processed_lookup)
             print(f"Resuming from checkpoint: {processed_total} documents already processed")
@@ -221,7 +257,7 @@ class FundingExtractorApp:
             )
             if discovered_documents == 0:
                 print("No parquet rows found to process")
-                return
+                return None
 
             if discovered_documents is not None:
                 print(f"Discovered {discovered_documents} parquet rows to process")
@@ -255,7 +291,7 @@ class FundingExtractorApp:
 
             if not docs_with_hashes:
                 print("All documents already processed")
-                return
+                return None
 
             total_documents = len(docs_with_hashes)
 
@@ -279,6 +315,65 @@ class FundingExtractorApp:
             summary={},
         )
         results.update_summary()
+
+        return {
+            "checkpoint_repo": checkpoint_repo,
+            "documents_iter": documents_iter,
+            "total_documents": total_documents,
+            "results": results,
+            "input_format": input_format,
+        }
+
+    def _apply_document_result(self, results: ProcessingResults, doc: DocumentResult) -> None:
+        summary = results.summary or {}
+        for key in ("total_files", "files_with_funding", "total_statements"):
+            summary.setdefault(key, 0)
+
+        existing = results.results.get(doc.filename)
+        if existing:
+            summary["total_statements"] -= len(existing.funding_statements)
+            if existing.has_funding():
+                summary["files_with_funding"] -= 1
+        else:
+            summary["total_files"] += 1
+
+        summary["total_statements"] += len(doc.funding_statements)
+        if doc.has_funding():
+            summary["files_with_funding"] += 1
+
+        results.summary = summary
+        results.results[doc.filename] = doc
+
+    def _print_summary(self, results: ProcessingResults, processed_count: int) -> None:
+        cfg = self.config
+        if processed_count == 0:
+            print("No new documents processed (all matched checkpoint or dataset was empty).")
+            return
+
+        print("\n" + "=" * 60)
+        print("PROCESSING COMPLETE")
+        print("=" * 60)
+        print(f"Total documents processed: {results.summary.get('total_files', 0)}")
+        print(f"Documents with funding: {results.summary.get('files_with_funding', 0)}")
+        print(f"Total statements: {results.summary.get('total_statements', 0)}")
+        print(f"\nResults saved to: {cfg.output.output_path}")
+
+    def run(self) -> None:
+        if self.config.runtime.legacy_engine:
+            self._run_legacy()
+        else:
+            self._run_batch()
+
+    def _run_legacy(self) -> None:
+        cfg = self.config
+        state = self._prepare_run()
+        if state is None:
+            return
+
+        checkpoint_repo: CheckpointRepository = state["checkpoint_repo"]
+        documents_iter: Iterator[Tuple[DocumentPayload, str]] = state["documents_iter"]
+        total_documents: Optional[int] = state["total_documents"]
+        results: ProcessingResults = state["results"]
 
         batch_results: List[DocumentResult] = []
         processed_count = 0
@@ -306,24 +401,7 @@ class FundingExtractorApp:
             }
 
         def apply_document_result(doc: DocumentResult) -> None:
-            summary = results.summary or {}
-            for key in ("total_files", "files_with_funding", "total_statements"):
-                summary.setdefault(key, 0)
-
-            existing = results.results.get(doc.filename)
-            if existing:
-                summary["total_statements"] -= len(existing.funding_statements)
-                if existing.has_funding():
-                    summary["files_with_funding"] -= 1
-            else:
-                summary["total_files"] += 1
-
-            summary["total_statements"] += len(doc.funding_statements)
-            if doc.has_funding():
-                summary["files_with_funding"] += 1
-
-            results.summary = summary
-            results.results[doc.filename] = doc
+            self._apply_document_result(results, doc)
 
         def flush_batch() -> None:
             nonlocal batch_results
@@ -436,18 +514,137 @@ class FundingExtractorApp:
                 executor.shutdown(wait=True)
 
         flush_batch()
+        self._print_summary(results, processed_count)
 
-        if processed_count == 0:
-            print("No new documents processed (all matched checkpoint or dataset was empty).")
+    def _run_batch(self) -> None:
+        cfg = self.config
+        state = self._prepare_run()
+        if state is None:
             return
 
-        print("\n" + "=" * 60)
-        print("PROCESSING COMPLETE")
-        print("=" * 60)
-        print(f"Total documents processed: {results.summary.get('total_files', 0)}")
-        print(f"Documents with funding: {results.summary.get('files_with_funding', 0)}")
-        print(f"Total statements: {results.summary.get('total_statements', 0)}")
-        print(f"\nResults saved to: {cfg.output.output_path}")
+        checkpoint_repo: CheckpointRepository = state["checkpoint_repo"]
+        documents_iter: Iterator[Tuple[DocumentPayload, str]] = state["documents_iter"]
+        total_documents: Optional[int] = state["total_documents"]
+        results: ProcessingResults = state["results"]
+
+        from funding_statement_extractor.statements.batch_extraction import (
+            DocPayload,
+            extract_funding_statements_batch,
+        )
+
+        def docs_iter() -> Iterator["DocPayload"]:
+            for document, doc_hash in documents_iter:
+                try:
+                    text = document.load_text()
+                except Exception as exc:
+                    print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
+                    checkpoint_repo.record(
+                        doc_hash,
+                        {
+                            "path": document.file_path or document.document_id,
+                            "document_id": document.document_id,
+                            "processed_at": datetime.now().isoformat(),
+                            "found_funding": False,
+                            "status": "failed",
+                            "error": f"load_text: {type(exc).__name__}: {exc}",
+                        },
+                    )
+                    continue
+
+                yield DocPayload(
+                    doc_id=document.document_id,
+                    text=text,
+                    metadata={
+                        "doc_hash": doc_hash,
+                        "path": document.file_path or document.document_id,
+                    },
+                )
+
+        fsync_interval = max(1, cfg.runtime.batch_size)
+        processed_count = 0
+        completions = 0
+
+        try:
+            for result in extract_funding_statements_batch(
+                documents=docs_iter(),
+                queries=self.queries,
+                model_name=cfg.extraction.colbert_model,
+                top_k=cfg.extraction.top_k,
+                threshold=cfg.extraction.threshold,
+                enable_paragraph_prefilter=cfg.processing.enable_paragraph_prefilter,
+                patterns_file=str(cfg.config_paths.patterns_file) if cfg.config_paths.patterns_file else None,
+                custom_config_dir=str(cfg.config_paths.config_dir) if cfg.config_paths.config_dir else None,
+                paragraphs_per_batch=cfg.runtime.paragraphs_per_batch,
+                encode_batch_size=cfg.runtime.encode_batch_size,
+                workers=cfg.runtime.workers,
+                queue_depth=cfg.runtime.queue_depth,
+                dtype=cfg.runtime.dtype,
+            ):
+                meta = result.metadata or {}
+                doc_hash = meta.get("doc_hash") or get_file_hash(result.doc_id)
+                doc_path = meta.get("path", result.doc_id)
+
+                if result.error:
+                    logger.warning("doc=%s error=%s", result.doc_id, result.error)
+                    checkpoint_repo.record(
+                        doc_hash,
+                        {
+                            "path": doc_path,
+                            "document_id": result.doc_id,
+                            "processed_at": datetime.now().isoformat(),
+                            "found_funding": False,
+                            "status": "failed",
+                            "error": result.error,
+                        },
+                    )
+                else:
+                    doc_result = DocumentResult(
+                        filename=result.doc_id,
+                        funding_statements=result.statements,
+                    )
+                    if cfg.processing.normalize:
+                        for stmt in doc_result.funding_statements:
+                            stmt.original = stmt.statement
+                            stmt.statement = normalize_funding_statement(stmt.statement)
+                            if is_improperly_formatted(stmt.statement):
+                                stmt.is_problematic = True
+                    else:
+                        for stmt in doc_result.funding_statements:
+                            if is_improperly_formatted(stmt.statement):
+                                stmt.is_problematic = True
+
+                    self._apply_document_result(results, doc_result)
+                    checkpoint_repo.record(
+                        doc_hash,
+                        {
+                            "path": doc_path,
+                            "document_id": result.doc_id,
+                            "processed_at": datetime.now().isoformat(),
+                            "found_funding": bool(doc_result.funding_statements),
+                            "status": "ok",
+                        },
+                    )
+                    processed_count += 1
+
+                completions += 1
+                if completions % fsync_interval == 0:
+                    save_results(results, cfg.output.output_path)
+                    checkpoint_repo.save()
+                    if total_documents is not None and total_documents > 0:
+                        print(f"Processed {completions}/{total_documents} documents, saved checkpoint")
+                    else:
+                        print(f"Processed {completions} documents, saved checkpoint")
+
+        except KeyboardInterrupt:
+            print("\nInterrupted! Saving progress...")
+            save_results(results, cfg.output.output_path)
+            checkpoint_repo.save()
+            print("Progress saved. Use --resume to continue.")
+            sys.exit(1)
+
+        save_results(results, cfg.output.output_path)
+        checkpoint_repo.save()
+        self._print_summary(results, completions)
 
 
 def run(args: argparse.Namespace) -> None:
