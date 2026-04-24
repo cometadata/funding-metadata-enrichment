@@ -170,6 +170,43 @@ Expected after Tier 2 combined with Tier 1: **~100–150 ms/doc, 6–9× over th
 | + Tier 2 (regex pre-filter before encode) | ~100–150 ms | ~25–35 min, ~$2–3 |
 | + Tier 3 (compile, cross-doc, async) | TBD | TBD |
 
+## Measured outcome (Tier 1 + Tier 2 shipped, H200 bf16, BS=512, n=50)
+
+Both jobs submitted on `statement-only-extraction @ d7ea77e`, same seed=42 sample. Reports: `reports/profile_h200_bf16_50_tier1.json` and `reports/profile_h200_bf16_50_tier2.json`. Each job ran in ~5 minutes / ~$0.42.
+
+| Configuration | wall_clock_per_doc_ms | model_encode_doc | rerank_internals (pad / score) | Speedup |
+|---|---:|---:|---:|---:|
+| Baseline (`profile_h200_bf16_50.json`) | 898 | 199 | 524 (393 / 93) | 1.0× |
+| Tier 1 (flag off, `_tier1.json`) | **208** | 187 | 11 (11 / 0.6) | **4.3×** |
+| Tier 2 (flag on, `_tier2.json`) | **35** | 19 | 1.1 (0.8 / 0.2) | **25×** |
+
+Both tiers beat the projection. Tier 1 came in at 208 ms vs projected ~410 ms (the projection assumed ~110 ms savings from batching; actual savings were closer to ~190 ms because the 32→1 einsum batching also collapsed 32× of cuda kernel-launch overhead, not just the einsum FLOPs). Tier 2 came in at 35 ms vs projected ~100–150 ms (encode dropped to 19 ms instead of the projected ~10 ms, but rerank phases collapsed faster than expected because the prefiltered paragraph set is small enough that the `colbert_scores` einsum is essentially free).
+
+### Updated 14,261-doc train cost projection at $5/hr H200
+
+| Configuration | Per-doc wall-clock | 14,261-doc cost |
+|---|---:|---:|
+| Baseline (measured) | 898 ms | ~$17.78 |
+| Tier 1 (measured) | 208 ms | **~$4.12** |
+| Tier 2 (measured) | 35 ms | **~$0.70** |
+
+### Tier 1 byte-identity verification
+
+Strict byte-identity vs the H200 baseline can't be diffed directly because the original baseline JSON predates `per_doc_predictions` capture. Two complementary checks instead:
+
+1. **Local CPU fp32 sanity, baseline (`dd1816e`) vs Tier 1 (`d7ea77e`), 3 docs**: identical predictions (verified via `scripts/diff_predictions.py`, exit 0). fp32 is deterministic; this confirms the Tier 1 refactor is mathematically equivalent at full precision.
+2. **H200 bf16, Tier 1 vs Tier 2 prediction sets, 50 docs**: 46/50 docs identical statement-set; 4/50 docs differ. Of those 4: Tier 2 lost 1 legitimate funding statement (doc 11, a Spanish R+D+i project line where the prefilter regex didn't match the surrounding context), and Tier 2 gained 3 paragraphs that became top-k once the candidate pool shrank. Net: Tier 1 found 49 statements, Tier 2 found 51, with 48 in the intersection — Tier 2 has 96% recall + slight precision shift, all attributable to the prefilter, not to the rerank refactor.
+
+The remaining attribution-only diffs (same statement assigned to a different query name in dedup ordering) are not present in the Tier 1 fp32 vs baseline fp32 comparison, confirming Tier 1 alone preserves predictions exactly. On H200 bf16 we expect occasional small precision drift between the 32× sequential einsums and the 1× batched einsum (different reduction orders); future work could quantify this drift over a larger sample if strict numerical equivalence on bf16 becomes a requirement.
+
+### Tier 2 recall trade-off
+
+The 1 statement Tier 2 lost on the 50-doc sample (doc 11) was:
+
+> "This publication is part of the R+D+i project PID2020-117868GB-I00, financed by MCIN / AEI / 10.13039 / 501100011033 /."
+
+The prefilter regex matches `fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial`. The paragraph contains "financed" — the regex catches "financial\w*" but not "financ\w*". Adding `financ` to the prefilter list would catch this case. Recommend running `scripts/benchmark_hf_job.py --enable-paragraph-prefilter` against the held-out test split to size the recall delta on a larger sample before committing to the keyword set; if recall slips more than 1–2 pts, expand the keyword list (start with `financ`, `donat`, `endow`, `subsid`).
+
 ## Reproducibility
 
 Commands, in order, from this repository root:

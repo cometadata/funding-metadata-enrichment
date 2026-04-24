@@ -1,0 +1,634 @@
+{
+  "run_config": {
+    "num_docs": 50,
+    "batch_size": 512,
+    "top_k": 5,
+    "threshold": 10.0,
+    "dtype": "bf16",
+    "colbert_model": "lightonai/GTE-ModernColBERT-v1",
+    "queries_file": null,
+    "dataset": "cometadata/arxiv-funding-statement-extraction",
+    "subdir": "data",
+    "split": "train",
+    "seed": 42,
+    "compile": false,
+    "compile_mode": "reduce-overhead",
+    "enable_paragraph_prefilter": false
+  },
+  "resolved": {
+    "device": "cuda",
+    "torch": "2.6.0+cu124",
+    "cuda_available": true,
+    "gpu_name": "NVIDIA H200",
+    "total_gb": 150.10988032,
+    "alloc_gb": 0.341441024,
+    "peak_gb": 2.89380864
+  },
+  "wall_clock_per_doc_ms": {
+    "mean_excl_warmup": 208.14295707992753,
+    "warmup_ms": 959.7667958587408,
+    "num_docs": 50
+  },
+  "top_phases": {
+    "phases": {
+      "filter_extract_funding_sentences": {
+        "mean_ms": 0.014884188315089869,
+        "median_ms": 0.0,
+        "p95_ms": 0.0,
+        "total_ms": 0.7293252274394035,
+        "pct_of_wallclock": 0.007632820958969003
+      },
+      "filter_is_likely_funding_statement": {
+        "mean_ms": 7.888004772973304,
+        "median_ms": 7.712670601904392,
+        "p95_ms": 9.481043554842472,
+        "total_ms": 386.5122338756919,
+        "pct_of_wallclock": 4.045079710161854
+      },
+      "filter_should_extract_full_paragraph": {
+        "mean_ms": 0.15693608367321443,
+        "median_ms": 0.11062528938055038,
+        "p95_ms": 0.7244078442454338,
+        "total_ms": 7.689868099987507,
+        "pct_of_wallclock": 0.08047902937810901
+      },
+      "model_encode_doc": {
+        "mean_ms": 186.7760571137983,
+        "median_ms": 140.67483879625797,
+        "p95_ms": 471.6510633006692,
+        "total_ms": 9152.026798576117,
+        "pct_of_wallclock": 95.78138714668523
+      },
+      "paragraph_split": {
+        "mean_ms": 0.16657361874775012,
+        "median_ms": 0.12391619384288788,
+        "p95_ms": 0.3963438794016838,
+        "total_ms": 8.162107318639755,
+        "pct_of_wallclock": 0.08542129281582277
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 195.00245577750766,
+    "warmup_skipped": true
+  },
+  "rerank_internals": {
+    "phases": {
+      "rerank_pad_docs_once": {
+        "mean_ms": 10.72422730527362,
+        "median_ms": 5.741036497056484,
+        "p95_ms": 29.72989808768034,
+        "total_ms": 525.4871379584074,
+        "pct_of_wallclock": 94.03266976030912
+      },
+      "rerank_pad_queries_once": {
+        "mean_ms": 0.05890845264099082,
+        "median_ms": 0.056053511798381805,
+        "p95_ms": 0.07105618715286255,
+        "total_ms": 2.8865141794085503,
+        "pct_of_wallclock": 0.5165238404222511
+      },
+      "rerank_score_all_queries": {
+        "mean_ms": 0.6216529528705441,
+        "median_ms": 0.5014939233660698,
+        "p95_ms": 1.1727642267942429,
+        "total_ms": 30.460994690656662,
+        "pct_of_wallclock": 5.450806399268635
+      }
+    },
+    "num_docs": 49,
+    "mean_total_ms": 11.404788710785155,
+    "warmup_skipped": true
+  },
+  "rerank_call_counts": {
+    "rerank_pad_docs_once": 50,
+    "rerank_pad_queries_once": 50,
+    "rerank_score_all_queries": 50
+  },
+  "unattributed_ms": 13.140501302419864,
+  "unattributed_pct": 6.313209674144233,
+  "per_doc_predictions": [
+    {
+      "doc_idx": 0,
+      "statements": [
+        {
+          "statement": "This work is supported by the National Natural Science Foundation of China under Grant 11261130311 (CRC110 by DFG and NSFC).",
+          "score": 10.666377067565918,
+          "query": "funding_statement",
+          "paragraph_idx": 61
+        }
+      ]
+    },
+    {
+      "doc_idx": 1,
+      "statements": []
+    },
+    {
+      "doc_idx": 2,
+      "statements": []
+    },
+    {
+      "doc_idx": 3,
+      "statements": []
+    },
+    {
+      "doc_idx": 4,
+      "statements": [
+        {
+          "statement": "R.L. acknowledges the support from the National Natural Science Foundation of China (Grant No. 51372131, 51232005), 973 program of China (No. 2014CB932401, 2015CB932500), and Beijing Nova Program and the Tsinghua University Initiative Scientific Research Program.",
+          "score": 10.797078132629395,
+          "query": "funding_statement",
+          "paragraph_idx": 86
+        },
+        {
+          "statement": "Y.L. acknowledges the support of China Scholarship Council.",
+          "score": 10.772172927856445,
+          "query": "funding_statement",
+          "paragraph_idx": 135
+        },
+        {
+          "statement": "The authors are also grateful for the support of the material characterization laboratory (MCL) at Pennsylvania State University for SEM, EDS, and TEM characterizations. The authors acknowledge Jeff Shallenberger for the XPS measurements.  J.L.M-C. and S. P. acknowledge the support from",
+          "score": 10.716407775878906,
+          "query": "funding_statement",
+          "paragraph_idx": 154
+        },
+        {
+          "statement": "This work is supported by the U.S. Army Research Office MURI grant W911NF-11-1-0362.",
+          "score": 10.69421672821045,
+          "query": "funding_statement",
+          "paragraph_idx": 383
+        },
+        {
+          "statement": "S.P., O.O.I. and J.L.M-C. were supported by Florida State University (FSU).",
+          "score": 10.813406944274902,
+          "query": "financial_support",
+          "paragraph_idx": 289
+        }
+      ]
+    },
+    {
+      "doc_idx": 5,
+      "statements": [
+        {
+          "statement": "E. Korec acknowledges financial support from the Imperial College President\u00e2\u00c2\u0080\u0099s PhD Scholarships. M. Jir\u00e1sek acknowledges the support of the European Regional Development Fund (Center of Advanced Applied Sciences, project CZ.02.1.01/0.0/0.0/16_19/0000778). E. Mart\u00ednez-Paneda was supported by an UKRI Future Leaders Fellowship [grant MR/V024124/1]. We additionally acknowledge computational resources and support provided by the Imperial College Research Computing Service (http://doi.org/10.14469/hpc/2232).",
+          "score": 10.874852180480957,
+          "query": "funding_statement",
+          "paragraph_idx": 429
+        }
+      ]
+    },
+    {
+      "doc_idx": 6,
+      "statements": [
+        {
+          "statement": "Two of us (E.A.K. and V.V.B.) acknowledge the kind hospitality of Saclay, where part of this work was done. This work was partly supported by INTAS grant 05-1000-008-8323 and grant MK\u20132952.2006.2 .",
+          "score": 10.76988410949707,
+          "query": "funding_statement",
+          "paragraph_idx": 46
+        }
+      ]
+    },
+    {
+      "doc_idx": 7,
+      "statements": []
+    },
+    {
+      "doc_idx": 8,
+      "statements": [
+        {
+          "statement": "This research was funded by Khalifa University of Science and Technology through the [Advancing Non-Destructive Testing (NDT) through Innovative Integration of Infrared Thermography (IRT) and Emerging Technologies in Aerospace Applications] under Project ID: KU-[INT]-[FSU]-[2024]-[8474000660].",
+          "score": 9.816901206970215,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 154
+        },
+        {
+          "statement": "vancing clinical decision support through multimodal ai (10 2025). doi:10.1007/s00371-025-04109-y.",
+          "score": 13.274792671203613,
+          "query": "multi_year_grant",
+          "paragraph_idx": 176
+        }
+      ]
+    },
+    {
+      "doc_idx": 9,
+      "statements": []
+    },
+    {
+      "doc_idx": 10,
+      "statements": []
+    },
+    {
+      "doc_idx": 11,
+      "statements": [
+        {
+          "statement": "The second author is also supported by the EBM / FEDER UJA 2020 project 1380860.",
+          "score": 10.619466781616211,
+          "query": "funding_statement",
+          "paragraph_idx": 83
+        },
+        {
+          "statement": "This publication is part of the R+D+i project PID2020-117868GB-I00, financed by MCIN / AEI / 10.13039 / 501100011033 /.",
+          "score": 10.615890502929688,
+          "query": "funding_statement",
+          "paragraph_idx": 172
+        }
+      ]
+    },
+    {
+      "doc_idx": 12,
+      "statements": []
+    },
+    {
+      "doc_idx": 13,
+      "statements": [
+        {
+          "statement": "This work was supported by National Science Foundation under grants DMR-0959066 and DMR-1508186.",
+          "score": 10.681204795837402,
+          "query": "funding_statement",
+          "paragraph_idx": 5
+        }
+      ]
+    },
+    {
+      "doc_idx": 14,
+      "statements": [
+        {
+          "statement": "We thank Korea Institute for Advanced Study for \ufb01nancial support and excellent research environment.",
+          "score": 10.762154579162598,
+          "query": "funding_statement",
+          "paragraph_idx": 99
+        },
+        {
+          "statement": "K. U. is supported by JSPS Grant-in-Aid for Young Scientists No. 24740043.",
+          "score": 10.726780891418457,
+          "query": "funding_statement",
+          "paragraph_idx": 149
+        }
+      ]
+    },
+    {
+      "doc_idx": 15,
+      "statements": [
+        {
+          "statement": "This work was supported in part by the Royal Society under IEC\\R3\\ 170013 - International Exchang-\nes 2017 Cost Share (Japan and Taiwan only), in part by a Microsoft Research Asia (MSRA) Collaborative Research 2019 Grant, and in part by the National Natural Science Foundation of China under grants 61771440 and 41776113.",
+          "score": 10.659322738647461,
+          "query": "funding_statement",
+          "paragraph_idx": 106
+        }
+      ]
+    },
+    {
+      "doc_idx": 16,
+      "statements": [
+        {
+          "statement": "This work has been financially supported by Italian government funds from PRIN 2022 (Progetti di Ricerca di Rilevante Interesse Nazionale) grant no. 2022AYFS7F, as allocated through the postdoctoral research contract no. 0000924 of the Physics Department of \u2018La Sapienza\u2019 University of Rome.",
+          "score": 10.765701293945312,
+          "query": "funding_statement",
+          "paragraph_idx": 19
+        }
+      ]
+    },
+    {
+      "doc_idx": 17,
+      "statements": [
+        {
+          "statement": "This research received fun-\nding from the Netherlands Organization for Scientific Research (NWO) in the fram-\nework of the Materials for sustainability and the Ministry of Economic Affairs in the framework of the PPP allowance and is also part of the NWO research program TOP-ECHO with project number 715.016.002 as well as the NWO Gravitation program \u00e2\u0080\u009cResearch Centre for Integrated Nanophotonics\u00e2\u0080\u009d. This work was carried out on the Dutch national e-infrastructure with the support of SURF Cooperative.",
+          "score": 9.752528190612793,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 16
+        }
+      ]
+    },
+    {
+      "doc_idx": 18,
+      "statements": [
+        {
+          "statement": "The work of FR is supported by the NSF grants PHY-2210333 and PHY-2019786 (The NSF AI Institute for Artificial Intelligence and Fundamental Interactions).",
+          "score": 10.666670799255371,
+          "query": "funding_statement",
+          "paragraph_idx": 75
+        },
+        {
+          "statement": "This research was supported in part by grant NSF PHY-2309135 to the Kavli Institute for Theoretical Physics (KITP).",
+          "score": 10.662259101867676,
+          "query": "funding_statement",
+          "paragraph_idx": 69
+        },
+        {
+          "statement": "The work of FR and PKO is also supported by startup funding from Northeastern University.",
+          "score": 10.660694122314453,
+          "query": "funding_statement",
+          "paragraph_idx": 442
+        },
+        {
+          "statement": "The work of FB is supported by the German Research Foundation through a German-Israeli Project Cooperation (DIP) grant \u201cHolography and the Swampland\u201d, and in part by the Deutsche Forschungsgemeinschaft under Germany\u2019s Excellence Strategy EXC 2121 Quantum Universe 390833306.",
+          "score": 9.786724090576172,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 61
+        },
+        {
+          "statement": "PKO would like to thank the KITP and the program \u201dWhat is String Theory? Weaving Perspectives Together\u201d for support during the completion of this work.",
+          "score": 10.782310485839844,
+          "query": "financial_support",
+          "paragraph_idx": 458
+        }
+      ]
+    },
+    {
+      "doc_idx": 19,
+      "statements": [
+        {
+          "statement": "J.K. is grateful to King\u2019s College London for their hospitality during the initial stages of this project and acknowledges support from the Research Foundation - Flanders (FWO) travel grant V458824N that enabled this visit.",
+          "score": 10.805320739746094,
+          "query": "funding_statement",
+          "paragraph_idx": 107
+        },
+        {
+          "statement": "This research was supported in part by KU Leuven grant C16/25/010.",
+          "score": 10.669445037841797,
+          "query": "funding_statement",
+          "paragraph_idx": 411
+        },
+        {
+          "statement": "D.A. is also funded by the Royal Society under the grant \u201cConcrete Calculables in Quantum de Sitter\u201d, and the STFC consolidated grant ST/X000753/1.",
+          "score": 10.661874771118164,
+          "query": "funding_statement",
+          "paragraph_idx": 93
+        },
+        {
+          "statement": "J.K. is further supported by the FWO doctoral fellowships 1171823N and 1171825N.",
+          "score": 9.742063522338867,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 164
+        }
+      ]
+    },
+    {
+      "doc_idx": 20,
+      "statements": [
+        {
+          "statement": "Our recent work in this area has been supported by National Science Foundation Grant DMR-0421810.",
+          "score": 10.726346015930176,
+          "query": "funding_statement",
+          "paragraph_idx": 80
+        }
+      ]
+    },
+    {
+      "doc_idx": 21,
+      "statements": [
+        {
+          "statement": "This work was supported by two NSFC grants, i.e., No.62576234, No.62376178 and sponsored by CIPS-LMG Huawei Innovation Fund. This work was also supported by Collaborative Inno-\nvation Center of Novel Software Technology and Industrialization, and a Project Funded by the Priority Academic Program Development of Jiangsu Higher Education Institutions (PAPD). [16] Rohit Gandikota, Joanna Materzynska, Tingrui Zhou, Antonio Torralba, and David Bau. 2023. Concept Sliders: LoRA Adaptors for Precise Control in Diffusion Models. *CoRR* (2023).",
+          "score": 10.689754486083984,
+          "query": "funding_statement",
+          "paragraph_idx": 127
+        }
+      ]
+    },
+    {
+      "doc_idx": 22,
+      "statements": [
+        {
+          "statement": "This work was supported by JSPS KAKENHI grant numbers 15K13478 and 17H02884 and by Grant for Basic Science Research Projects from The Sumitomo Foundation.",
+          "score": 10.67641544342041,
+          "query": "funding_statement",
+          "paragraph_idx": 22
+        }
+      ]
+    },
+    {
+      "doc_idx": 23,
+      "statements": [
+        {
+          "statement": "D. P. acknowledges the support from CONICET under Grant No. PIP 0554 and AGENCIA I+D+i under Grant PICT-2021-I-INVI-00387.",
+          "score": 10.870077133178711,
+          "query": "funding_statement",
+          "paragraph_idx": 172
+        },
+        {
+          "statement": "J.L.R. acknowledges the European Regional Development Fund and the programme Mobilitas Pluss for financial support through Project No. MOBJD647, project No. 2021/43/P/ST2/02141 co-funded by the Polish National Science Centre and the European Union Framework Programme for Research and Innovation Horizon 2020 under the Marie Sklodowska-Curie grant agreement No. 94533, Funda\u00e7\u00e3o para a Ci\u00eancia e Tecnologia through project number PTDC/FIS-AST/7002/2020, and Ministerio de Ciencia, Innovaci\u00f3n y Universidades (Spain), through grant No. PID2022-138607NB-I00.",
+          "score": 10.86755657196045,
+          "query": "funding_statement",
+          "paragraph_idx": 56
+        },
+        {
+          "statement": "J.P. acknowledges financial support from CONICET under a doctoral research fellowship.",
+          "score": 10.855081558227539,
+          "query": "funding_statement",
+          "paragraph_idx": 35
+        }
+      ]
+    },
+    {
+      "doc_idx": 24,
+      "statements": []
+    },
+    {
+      "doc_idx": 25,
+      "statements": [
+        {
+          "statement": "Research supported in part by NSF grant DMS 0758534.",
+          "score": 10.698060989379883,
+          "query": "funding_statement",
+          "paragraph_idx": 11
+        }
+      ]
+    },
+    {
+      "doc_idx": 26,
+      "statements": []
+    },
+    {
+      "doc_idx": 27,
+      "statements": []
+    },
+    {
+      "doc_idx": 28,
+      "statements": []
+    },
+    {
+      "doc_idx": 29,
+      "statements": [
+        {
+          "statement": "This work is partly supported by a subaward from Arizona State University entitled \"Accelerating Material Design and Manufacturing through Artificial Intelligence and Machine Learning\" funded by ERDC DoD.",
+          "score": 10.623623847961426,
+          "query": "funding_statement",
+          "paragraph_idx": 79
+        }
+      ]
+    },
+    {
+      "doc_idx": 30,
+      "statements": [
+        {
+          "statement": "This work was supported by the Natural Science Foundation of Jiangsu Province (Grant No. BK20180235).",
+          "score": 10.666397094726562,
+          "query": "funding_statement",
+          "paragraph_idx": 65
+        }
+      ]
+    },
+    {
+      "doc_idx": 31,
+      "statements": []
+    },
+    {
+      "doc_idx": 32,
+      "statements": [
+        {
+          "statement": "This research is supported by the Singapore National Research Foundation under Research Grant NRF-CRP2-2007-03.",
+          "score": 10.64599895477295,
+          "query": "funding_statement",
+          "paragraph_idx": 167
+        }
+      ]
+    },
+    {
+      "doc_idx": 33,
+      "statements": []
+    },
+    {
+      "doc_idx": 34,
+      "statements": []
+    },
+    {
+      "doc_idx": 35,
+      "statements": []
+    },
+    {
+      "doc_idx": 36,
+      "statements": []
+    },
+    {
+      "doc_idx": 37,
+      "statements": []
+    },
+    {
+      "doc_idx": 38,
+      "statements": [
+        {
+          "statement": "This work was supported by NASA grants in the US and by INFN in Italy. The authors greatly appreciated the support of CERN for the beam test facilities and operations.",
+          "score": 10.668526649475098,
+          "query": "funding_statement",
+          "paragraph_idx": 13
+        }
+      ]
+    },
+    {
+      "doc_idx": 39,
+      "statements": [
+        {
+          "statement": "The last author is supported by 404266/2016-9 (CNPq); L. Grama is partially supported by 2018/13481-0 (FAPESP) and 305036/2019-0 (CNPq); R. M. Martins is partially supported by 434599/2018-2 (CNPq) and 2018/03338-6 (FAPESP); M. Patr\u00e3o is partially supported by 88887.466805/2019-00 (CAPES-PRINT).",
+          "score": 9.771883010864258,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 177
+        }
+      ]
+    },
+    {
+      "doc_idx": 40,
+      "statements": []
+    },
+    {
+      "doc_idx": 41,
+      "statements": []
+    },
+    {
+      "doc_idx": 42,
+      "statements": [
+        {
+          "statement": "X.-M.J. acknowledges additional support from a Shanghai talent program.",
+          "score": 10.728079795837402,
+          "query": "funding_statement",
+          "paragraph_idx": 49
+        },
+        {
+          "statement": "H. T. is supported by National Natural Science Foundation of China (NSFC) (11904229), China Postdoctoral Science Foundation (19Z102060090).",
+          "score": 10.621844291687012,
+          "query": "funding_statement",
+          "paragraph_idx": 31
+        },
+        {
+          "statement": "This research was supported by the National Key R&D Program of China (2019YFA0308700, 2017YFA0303700), the National Natural Science Foundation of China (61734005, 11761141014, 11690033), the Science and Technology Commission of Shanghai Municipality (STCSM) (17JC1400403), and the Shanghai Municipal Education Commission (SMEC) (2017-01-07-00-02- E00049).",
+          "score": 10.855731964111328,
+          "query": "financial_support",
+          "paragraph_idx": 25
+        }
+      ]
+    },
+    {
+      "doc_idx": 43,
+      "statements": []
+    },
+    {
+      "doc_idx": 44,
+      "statements": [
+        {
+          "statement": "$^*$ Supported by the Dutch Research Council (NWO) as part of the NETWORKS programme (grant no. 024.002.003).",
+          "score": 10.657821655273438,
+          "query": "funding_statement",
+          "paragraph_idx": 102
+        },
+        {
+          "statement": "For convenience, we repeat below its formal statement as given in the Introduction. $^\\dagger$ Supported by the Dutch Research Council (NWO) as part of the NETWORKS programme (grant no. 024.002.003). **Theorem 2.2** (Theorem 1.4 restated).",
+          "score": 9.903275489807129,
+          "query": "research_funding",
+          "paragraph_idx": 93
+        }
+      ]
+    },
+    {
+      "doc_idx": 45,
+      "statements": [
+        {
+          "statement": "We acknowledge support from EPSRC in the UK under grant No. GR/R46489/01, the ESF VORTEX network, the US NSA and ARDA under AFOSR contract No. F49620-02-1-0334, NSF grant No. EIA-0130383, and a Grant-in-Aid from MEXT, Japan.",
+          "score": 10.793851852416992,
+          "query": "funding_statement",
+          "paragraph_idx": 11
+        }
+      ]
+    },
+    {
+      "doc_idx": 46,
+      "statements": [
+        {
+          "statement": "This work was partially supported by AFOSR grant FA9550-25-1-0182.",
+          "score": 10.721542358398438,
+          "query": "funding_statement",
+          "paragraph_idx": 532
+        }
+      ]
+    },
+    {
+      "doc_idx": 47,
+      "statements": [
+        {
+          "statement": "The authors thank the Russian Scientific Foundation for the financial support under the grant 18-12-00022.",
+          "score": 10.844648361206055,
+          "query": "funding_statement",
+          "paragraph_idx": 121
+        }
+      ]
+    },
+    {
+      "doc_idx": 48,
+      "statements": []
+    },
+    {
+      "doc_idx": 49,
+      "statements": [
+        {
+          "statement": "This research is supported in part by the US AFOSR, grant number FA9550-12-1-0340 and the National Science Foundation, grant number DMS-1015346, and by the Chinese NSF under the grant 11101261, 11371242 and the First-class Discipline of Universities in Shanghai.",
+          "score": 10.657465934753418,
+          "query": "funding_statement",
+          "paragraph_idx": 125
+        },
+        {
+          "statement": "[10] M. GRANT AND S. BOYD, *CVX: Matlab software for disciplined convex programming, version 1.21*, Apr. 2011.",
+          "score": 9.756734848022461,
+          "query": "grant_acknowledgment",
+          "paragraph_idx": 444
+        }
+      ]
+    }
+  ]
+}
