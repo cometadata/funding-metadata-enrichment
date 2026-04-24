@@ -243,3 +243,88 @@ def test_apply_inverse_permutation_round_trips():
     unsorted = _apply_inverse_permutation(fake_embeddings, perm)
     expected = [f"emb({p})" for p in paras]
     assert unsorted == expected
+
+
+import numpy as np
+import torch
+
+
+class FakeColBERT:
+    """Minimal stand-in for pylate.models.ColBERT for tests.
+
+    encode() returns one numpy array per input (variable seq_len, fixed dim).
+    """
+
+    def __init__(self, dim: int = 8, device: str = "cpu"):
+        self._dim = dim
+        self._device = torch.device(device)
+        self._params = [torch.zeros(1, device=self._device)]
+
+    def parameters(self):
+        return iter(self._params)
+
+    def encode(self, texts, batch_size=32, is_query=False, show_progress_bar=False):
+        rng = np.random.default_rng(0)
+        out = []
+        for t in texts:
+            seq_len = max(2, min(len(t) // 5, 16))
+            out.append(rng.standard_normal((seq_len, self._dim)).astype(np.float32))
+        if is_query:
+            return out
+        return out
+
+
+def _make_pre_out(doc_id, paragraphs):
+    return _PreOut(
+        doc=DocPayload(doc_id=doc_id, text="\n\n".join(paragraphs)),
+        paragraphs=paragraphs,
+        original_indices=list(range(len(paragraphs))),
+        full_paragraphs=paragraphs,
+        enqueue_ts=0.0,
+        pre_ms=0.0,
+    )
+
+
+def test_run_gpu_pass_demuxes_per_doc_topk():
+    from funding_statement_extractor.statements.batch_extraction import (
+        _build_query_embeddings, _run_gpu_pass,
+    )
+    model = FakeColBERT(dim=8)
+    queries = {"q1": "funding statement", "q2": "grant"}
+    query_emb_padded, query_names = _build_query_embeddings(model, queries)
+    batch = [
+        _make_pre_out("d1", ["short", "a longer paragraph here", "tiny"]),
+        _make_pre_out("d2", ["only one"]),
+    ]
+    post_items = _run_gpu_pass(
+        batch, model, query_emb_padded, query_names,
+        encode_batch_size=8, top_k=2,
+    )
+    assert len(post_items) == 2
+    assert {p.pre.doc.doc_id for p in post_items} == {"d1", "d2"}
+    d1 = next(p for p in post_items if p.pre.doc.doc_id == "d1")
+    assert len(d1.topk_idx) == 2                 # 2 queries
+    assert len(d1.topk_idx[0]) == 2              # min(top_k=2, doc_paragraphs=3)
+    d2 = next(p for p in post_items if p.pre.doc.doc_id == "d2")
+    assert len(d2.topk_idx[0]) == 1              # min(top_k=2, doc_paragraphs=1)
+
+
+def test_run_gpu_pass_handles_empty_paragraph_doc():
+    from funding_statement_extractor.statements.batch_extraction import (
+        _build_query_embeddings, _run_gpu_pass,
+    )
+    model = FakeColBERT(dim=8)
+    queries = {"q1": "funding statement"}
+    query_emb_padded, query_names = _build_query_embeddings(model, queries)
+    batch = [
+        _make_pre_out("d_empty", []),
+        _make_pre_out("d1", ["funding paragraph"]),
+    ]
+    post_items = _run_gpu_pass(
+        batch, model, query_emb_padded, query_names,
+        encode_batch_size=8, top_k=2,
+    )
+    assert len(post_items) == 2
+    empty = next(p for p in post_items if p.pre.doc.doc_id == "d_empty")
+    assert empty.topk_scores is None
+    assert empty.topk_idx is None

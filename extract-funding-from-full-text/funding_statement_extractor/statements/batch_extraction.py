@@ -2,6 +2,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Pattern, Set, Tuple
 
+import numpy as np
+import torch
+from pylate.scores import colbert_scores
+
 from funding_statement_extractor.statements.extraction import (
     SemanticExtractionService,
     _prefilter_paragraphs,
@@ -207,3 +211,108 @@ def _post_task(
         timings={"pre_ms": pre.pre_ms, "queue_wait_ms": item.queue_wait_ms,
                  "gpu_ms": item.gpu_ms, "post_ms": (time.perf_counter() - t0) * 1000.0},
     )
+
+
+def _build_query_embeddings(model, queries: Dict[str, str]) -> Tuple[torch.Tensor, List[str]]:
+    """Encode each query once, pad-stack, move to model's device."""
+    ordered_names = list(queries.keys())
+    q_tensors: List[torch.Tensor] = []
+    for name in ordered_names:
+        emb = model.encode([queries[name]], batch_size=1, is_query=True, show_progress_bar=False)
+        if isinstance(emb, list) and len(emb) == 1:
+            emb = emb[0]
+        t = torch.as_tensor(emb)
+        if t.ndim == 3 and t.shape[0] == 1:
+            t = t.squeeze(0)
+        q_tensors.append(t)
+    padded = torch.nn.utils.rnn.pad_sequence(q_tensors, batch_first=True, padding_value=0)
+    device = next(model.parameters()).device
+    return padded.to(device), ordered_names
+
+
+def _encode_with_oom_fallback(model, paragraphs: List[str], encode_batch_size: int):
+    """Run model.encode; on torch.cuda.OutOfMemoryError, halve batch size and retry.
+
+    Terminates because at batch_size=1 either it succeeds or the single paragraph is
+    too large to encode at all (extremely unlikely on H200) — caller treats that as
+    a per-doc failure further out.
+    """
+    bs = encode_batch_size
+    while bs >= 1:
+        try:
+            return model.encode(paragraphs, batch_size=bs,
+                                is_query=False, show_progress_bar=False)
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            if bs == 1:
+                raise
+            bs = max(1, bs // 2)
+
+
+def _run_gpu_pass(
+    batch: List[_PreOut],
+    model,
+    query_emb_padded: torch.Tensor,
+    query_names: List[str],
+    *,
+    encode_batch_size: int,
+    top_k: int,
+) -> List[_PostIn]:
+    """Encode + score + per-doc top-k demux for one pipeline batch.
+
+    Pure: takes a batch and returns one _PostIn per input _PreOut, in the same order.
+    Empty-paragraph docs get a _PostIn with topk_scores=None.
+    """
+    t_gpu_start = time.perf_counter()
+    out: List[Optional[_PostIn]] = [None] * len(batch)
+
+    # Flatten the non-empty docs into one big paragraph list with bookkeeping.
+    all_paras: List[str] = []
+    bounds: List[Tuple[int, int, int]] = []   # (batch_pos, lo, hi) into all_paras
+    now = time.monotonic()
+    for batch_pos, pre in enumerate(batch):
+        if not pre.paragraphs:
+            out[batch_pos] = _PostIn(
+                pre=pre, topk_scores=None, topk_idx=None,
+                query_names=query_names,
+                queue_wait_ms=(now - pre.enqueue_ts) * 1000.0,
+                gpu_ms=0.0,
+            )
+            continue
+        lo = len(all_paras)
+        all_paras.extend(pre.paragraphs)
+        bounds.append((batch_pos, lo, len(all_paras)))
+
+    if not all_paras:
+        return [item for item in out if item is not None]
+
+    perm = _length_sort_permutation(all_paras)
+    sorted_paras = [all_paras[i] for i in perm]
+    embs_sorted = _encode_with_oom_fallback(model, sorted_paras, encode_batch_size)
+    embs = _apply_inverse_permutation(list(embs_sorted), perm)
+
+    device = next(model.parameters()).device
+    doc_tensors = [torch.as_tensor(e) for e in embs]
+    padded_docs = torch.nn.utils.rnn.pad_sequence(
+        doc_tensors, batch_first=True, padding_value=0
+    ).to(device)
+    scores = colbert_scores(queries_embeddings=query_emb_padded,
+                            documents_embeddings=padded_docs)   # [num_q, num_paras]
+
+    gpu_ms = (time.perf_counter() - t_gpu_start) * 1000.0
+
+    for batch_pos, lo, hi in bounds:
+        doc_scores = scores[:, lo:hi]
+        k = min(top_k, hi - lo)
+        topk_s, topk_i = torch.topk(doc_scores, k=k, dim=1)
+        pre = batch[batch_pos]
+        out[batch_pos] = _PostIn(
+            pre=pre,
+            topk_scores=topk_s.cpu().tolist(),
+            topk_idx=topk_i.cpu().tolist(),
+            query_names=query_names,
+            queue_wait_ms=(now - pre.enqueue_ts) * 1000.0,
+            gpu_ms=gpu_ms,
+        )
+
+    return [item for item in out if item is not None]
