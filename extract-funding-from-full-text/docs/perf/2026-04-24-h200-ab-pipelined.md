@@ -62,6 +62,30 @@ The Tier 1 failure rate (6/6 across all submissions) combined with the Tier 2 su
 - Batch Tier 2 logs: `/tmp/log-batch-tier2-v2.txt` (locally, not committed)
 - Byte-identity CPU gate evidence: `reports/byte-identity/2026-04-24/` (committed in `6fcfa96`)
 
+## Phase 1 pipeline profiling attempt (Tier 2, 2026-04-24)
+
+Per `docs/plans/2026-04-24-tier2-throughput-tuning.md` Task 1.2, we landed a `--profile-pipeline` instrumentation flag in `batch_extraction.py` (commit `e387f8d`) and submitted one H200 benchmark job to capture the pipeline phase-share profile at the batch Tier 2 v2 config.
+
+**Outcome: blocked on infrastructure.** Two submissions against the same h200 pool that completed the v2 batch Tier 2 run earlier that day:
+
+| Submission | Result |
+|---|---|
+| `69ebc29ad2c8bd8662bccb4e` | Cancelled manually after first probe iteration surfaced the Error 802 `UserWarning`. The warning itself isn't fatal — the retry probe at `benchmark_hf_job.py:693` is designed to keep retrying — so this cancel was premature. |
+| `69ebc3bad70108f37acdddc6` | Ran the full 120 s retry probe; every attempt hit Error 802; aborted with "CUDA not available after 120s wait" (exit 2). |
+
+Same failure mode as the six Tier 1 submissions above.
+
+Per the tuning plan's non-goals ("H200 CUDA Error 802 infrastructure triage… out of scope. If any Tier 2 Phase 2/3 run fails with Error 802, tuning is paused pending infrastructure recovery"), Phase 1 data capture is paused. The instrumentation code is merged and idle — the next attempt can re-use the identical invocation. When the h200 pool stabilises, resubmit with:
+
+```
+--split test --subdirs data,arxiv-latex-extract \
+--dtype bf16 --enable-paragraph-prefilter \
+--paragraphs-per-batch 4096 --encode-batch-size 512 --queue-depth 128 \
+--profile-pipeline --no-push --run-name phase1-profile-tier2
+```
+
+Expected billed cost for the rerun: ≈ $0.30.
+
 ## Conclusion
 
 The pipelined batch engine is **correct** (F1 parity on every bucket, identical bucket-level metrics to the legacy baseline) and **faster** (50.4 vs 22.78 docs/sec in Tier 2 on a completed H200 run). It does not currently hit the design doc's aggressive throughput/memory targets — the GPU is under-utilized at `paragraphs_per_batch=4096`. Tuning work can follow-up in a separate PR. F1 parity alone is sufficient to proceed with PR 2 review; the throughput miss should be flagged in the PR description.
