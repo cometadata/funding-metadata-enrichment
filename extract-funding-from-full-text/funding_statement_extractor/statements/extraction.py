@@ -312,10 +312,13 @@ class SemanticExtractionService:
         patterns_file: Optional[str] = None,
         custom_config_dir: Optional[str] = None,
         enable_paragraph_prefilter: bool = False,
-        regex_match_score_floor: float = 3.0,
+        regex_match_score_floor: Optional[float] = None,
     ) -> List[FundingStatement]:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         model = self._get_model(model_name)
+
+        if regex_match_score_floor is None:
+            regex_match_score_floor = 11.0 if enable_paragraph_prefilter else 3.0
 
         if content is None:
             if not file_path:
@@ -498,7 +501,7 @@ def extract_funding_statements(
     custom_config_dir: Optional[str] = None,
     enable_pattern_rescue: bool = False,
     enable_paragraph_prefilter: bool = False,
-    regex_match_score_floor: float = 3.0,
+    regex_match_score_floor: Optional[float] = None,
 ) -> List[FundingStatement]:
     statements = _DEFAULT_SEMANTIC_EXTRACTOR.extract_funding_statements(
         queries=queries,

@@ -188,8 +188,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--enable-pattern-rescue", action="store_true")
     parser.add_argument("--enable-post-filter", action="store_true")
     parser.add_argument("--enable-paragraph-prefilter", action="store_true")
-    parser.add_argument("--regex-match-score-floor", type=float, default=3.0,
-                        help="Score floor for the keyword-match branch of _is_likely_funding_statement (default 3.0). Raise for stricter precision when prefilter is on.")
+    parser.add_argument("--regex-match-score-floor", type=float, default=None,
+                        help="Score floor for the keyword-match branch of _is_likely_funding_statement. If unset, defaults to 11.0 when --enable-paragraph-prefilter is on else 3.0.")
     parser.add_argument("--queries-file", default=None)
 
     parser.add_argument(
