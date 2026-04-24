@@ -28,7 +28,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use walkdir::WalkDir;
 
-use funding_prefilter::pipeline::{run as run_pipeline, PipelineConfig};
+use funding_prefilter::pipeline::{run as run_pipeline, PipelineConfig, PipelineStats};
 
 #[derive(Parser)]
 #[command(
@@ -49,6 +49,26 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run the prefilter over a directory of parquet shards (default).
+    ///
+    /// Exit codes:
+    ///   0 — every shard either processed or was skipped successfully.
+    ///   1 — runtime error before/while orchestrating the pipeline.
+    ///   2 — usage error (e.g. missing --input/--output) — clap-style.
+    ///   3 — every shard errored (catastrophic; the pipeline produced no
+    ///       successfully-processed output).
+    ///   4 — partial failure: at least one shard errored but at least one
+    ///       also processed successfully. Re-run with --force or inspect
+    ///       the [error] lines on stderr.
+    #[command(long_about = "Run the prefilter over a directory of parquet shards.\n\n\
+        Exit codes:\n\
+        \x20 0 — every shard either processed or was skipped successfully.\n\
+        \x20 1 — runtime error before/while orchestrating the pipeline.\n\
+        \x20 2 — usage error (e.g. missing --input/--output) — clap-style.\n\
+        \x20 3 — every shard errored (catastrophic; pipeline produced no\n\
+        \x20     successfully-processed output).\n\
+        \x20 4 — partial failure: at least one shard errored but at least one\n\
+        \x20     also processed successfully. Re-run with --force or inspect\n\
+        \x20     the [error] lines on stderr.")]
     Run(RunArgs),
     /// Merge per-shard candidate parquets into a single parquet + text file.
     Merge(MergeArgs),
@@ -172,7 +192,33 @@ fn run_cmd(args: RunArgs) -> Result<ExitCode> {
         stats.elapsed_secs,
     );
 
-    Ok(ExitCode::SUCCESS)
+    let code = classify_exit_code(&stats);
+    // Surface a partial-failure warning so a CI green-light doesn't slip past
+    // an operator skimming logs.
+    if stats.shards_errored > 0 && stats.shards_errored < stats.shards_total {
+        eprintln!(
+            "warning: {}/{} shards errored — see [error] lines above; exiting with code 4",
+            stats.shards_errored, stats.shards_total
+        );
+    }
+    Ok(code)
+}
+
+/// Map terminal pipeline counters to a process exit code. Split out for unit
+/// testing because the pipeline owns the actual run side-effects.
+///
+/// * `shards_errored == 0` → 0 (success, includes the "all skipped" case).
+/// * `shards_errored == shards_total` → 3 (catastrophic — every shard failed,
+///   including the case where the pipeline ran but produced nothing useful).
+/// * otherwise → 4 (partial failure).
+fn classify_exit_code(stats: &PipelineStats) -> ExitCode {
+    if stats.shards_errored == 0 {
+        ExitCode::SUCCESS
+    } else if stats.shards_total > 0 && stats.shards_errored == stats.shards_total {
+        ExitCode::from(3)
+    } else {
+        ExitCode::from(4)
+    }
 }
 
 /// Arrow/parquet schema for candidate shards — must stay in sync with
@@ -500,5 +546,79 @@ mod tests {
         assert!(out_ids.exists(), "empty merge must still create ids file");
         let ids_text = std::fs::read_to_string(&out_ids).unwrap();
         assert!(ids_text.is_empty(), "empty input -> empty ids file");
+    }
+
+    /// Helper to build a `PipelineStats` for exit-code tests.
+    fn stats(shards_total: usize, shards_done: usize, shards_errored: usize) -> PipelineStats {
+        let shards_skipped = shards_total
+            .saturating_sub(shards_done)
+            .saturating_sub(shards_errored);
+        PipelineStats {
+            shards_total,
+            shards_done,
+            shards_skipped,
+            shards_errored,
+            rows_read: 0,
+            candidates_kept: 0,
+            elapsed_secs: 0.0,
+        }
+    }
+
+    /// Regression for C4: when every shard errors, the binary must exit
+    /// non-zero (3) so CI / scripted callers don't silently assume success.
+    /// The motivating scenario was C1/C2 bugs returning errors for every row
+    /// in every shard while the binary still exited 0.
+    #[test]
+    fn classify_exit_code_all_errored_is_three() {
+        // 5/5 shards errored.
+        let s = stats(5, 0, 5);
+        assert_eq!(format!("{:?}", classify_exit_code(&s)), format!("{:?}", ExitCode::from(3)));
+    }
+
+    /// Some shards errored but at least one succeeded — exit 4 (partial).
+    #[test]
+    fn classify_exit_code_partial_failure_is_four() {
+        let s = stats(5, 3, 2);
+        assert_eq!(format!("{:?}", classify_exit_code(&s)), format!("{:?}", ExitCode::from(4)));
+    }
+
+    /// Skipped + errored counts add up to total — still partial as long as
+    /// not every shard failed.
+    #[test]
+    fn classify_exit_code_partial_with_skipped_is_four() {
+        let s = stats(5, 0, 1); // 1 errored, 4 skipped.
+        assert_eq!(format!("{:?}", classify_exit_code(&s)), format!("{:?}", ExitCode::from(4)));
+    }
+
+    /// All shards processed cleanly — exit 0.
+    #[test]
+    fn classify_exit_code_all_clean_is_success() {
+        let s = stats(5, 5, 0);
+        assert_eq!(
+            format!("{:?}", classify_exit_code(&s)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
+    }
+
+    /// All shards skipped (e.g. resumed run) — also success.
+    #[test]
+    fn classify_exit_code_all_skipped_is_success() {
+        let s = stats(5, 0, 0); // 5 skipped.
+        assert_eq!(
+            format!("{:?}", classify_exit_code(&s)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
+    }
+
+    /// Edge case: 0 shards processed (shouldn't happen — `enumerate_shards`
+    /// errors on empty input — but the helper should still classify it as
+    /// success rather than panicking on the divide-by-zero shape.
+    #[test]
+    fn classify_exit_code_zero_shards_is_success() {
+        let s = stats(0, 0, 0);
+        assert_eq!(
+            format!("{:?}", classify_exit_code(&s)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
     }
 }
