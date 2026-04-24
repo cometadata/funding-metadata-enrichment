@@ -328,3 +328,32 @@ def test_run_gpu_pass_handles_empty_paragraph_doc():
     empty = next(p for p in post_items if p.pre.doc.doc_id == "d_empty")
     assert empty.topk_scores is None
     assert empty.topk_idx is None
+
+
+def test_encode_with_oom_fallback_halves_and_retries():
+    from funding_statement_extractor.statements.batch_extraction import _encode_with_oom_fallback
+
+    class OOMOnceModel:
+        def __init__(self):
+            self.calls = []
+        def encode(self, texts, batch_size, is_query=False, show_progress_bar=False):
+            self.calls.append(batch_size)
+            if batch_size > 4:
+                raise torch.cuda.OutOfMemoryError("simulated OOM")
+            return [np.zeros((2, 4), dtype=np.float32) for _ in texts]
+
+    m = OOMOnceModel()
+    embs = _encode_with_oom_fallback(m, ["a", "b", "c"], encode_batch_size=16)
+    assert m.calls == [16, 8, 4]                  # halved twice before success
+    assert len(embs) == 3
+
+
+def test_encode_with_oom_fallback_raises_at_batch_one():
+    from funding_statement_extractor.statements.batch_extraction import _encode_with_oom_fallback
+
+    class AlwaysOOM:
+        def encode(self, texts, batch_size, is_query=False, show_progress_bar=False):
+            raise torch.cuda.OutOfMemoryError("simulated permanent OOM")
+
+    with __import__("pytest").raises(torch.cuda.OutOfMemoryError):
+        _encode_with_oom_fallback(AlwaysOOM(), ["a"], encode_batch_size=4)
