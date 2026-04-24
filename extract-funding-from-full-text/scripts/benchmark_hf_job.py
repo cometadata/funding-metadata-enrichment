@@ -682,7 +682,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     else:
         cuda_ok = False
-        for attempt in range(30):
+        for attempt in range(120):
             try:
                 if torch.cuda.is_available() and torch.cuda.device_count() > 0:
                     cuda_ok = True
@@ -692,7 +692,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             time.sleep(1)
         if not cuda_ok:
             logger.error(
-                "CUDA not available after 30s wait — refusing to fall back to CPU "
+                "CUDA not available after 120s wait — refusing to fall back to CPU "
                 "(would take ~14h on h200 host CPU). Aborting."
             )
             return 2
