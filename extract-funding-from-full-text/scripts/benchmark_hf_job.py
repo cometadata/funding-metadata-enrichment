@@ -211,6 +211,37 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--log-every", type=int, default=50)
 
+    parser.add_argument(
+        "--legacy-engine",
+        action="store_true",
+        help="Use the per-doc extract_funding_statements() loop instead of "
+             "the new pipelined batch engine. For A/B comparison only.",
+    )
+    parser.add_argument(
+        "--paragraphs-per-batch",
+        type=int,
+        default=4096,
+        help="Pipeline batch size (paragraphs) for the GPU consumer.",
+    )
+    parser.add_argument(
+        "--encode-batch-size",
+        type=int,
+        default=512,
+        help="Sub-batch size passed to model.encode (distinct from --batch-size).",
+    )
+    parser.add_argument(
+        "--queue-depth",
+        type=int,
+        default=128,
+        help="Bounded queue depth between pipeline stages.",
+    )
+    parser.add_argument(
+        "--engine-workers",
+        type=int,
+        default=None,
+        help="CPU workers for the pre/post pool. Default: cpu_count - 2.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -277,11 +308,10 @@ def _gpu_mem_summary() -> str:
         return f"gpu_mem probe failed: {exc}"
 
 
-def run_extraction(args: argparse.Namespace, ds) -> Tuple[List[Dict[str, Any]], Dict[str, List[float]], float]:
+def run_extraction(args: argparse.Namespace, ds) -> Tuple[List[Dict[str, Any]], Dict[str, List[Tuple[float, bool]]], float]:
     _apply_dtype_patch(args.dtype)
 
     from funding_statement_extractor.config.loader import load_queries
-    from funding_statement_extractor.statements.extraction import SemanticExtractionService
 
     try:
         import torch
@@ -292,12 +322,21 @@ def run_extraction(args: argparse.Namespace, ds) -> Tuple[List[Dict[str, Any]], 
     except Exception as exc:
         logger.warning("torch probe failed: %s", exc)
 
-    service = SemanticExtractionService()
     queries = load_queries(queries_file=args.queries_file)
     logger.info("loaded %d semantic queries", len(queries))
 
+    if args.legacy_engine:
+        return _run_extraction_legacy(args, ds, queries)
+    return _run_extraction_batch(args, ds, queries)
+
+
+def _run_extraction_legacy(args: argparse.Namespace, ds, queries: Dict[str, str]) -> Tuple[List[Dict[str, Any]], Dict[str, List[Tuple[float, bool]]], float]:
+    from funding_statement_extractor.statements.extraction import SemanticExtractionService
+
+    service = SemanticExtractionService()
+
     predictions_rows: List[Dict[str, Any]] = []
-    latencies_by_bucket: Dict[str, List[float]] = defaultdict(list)
+    latencies_by_bucket: Dict[str, List[Tuple[float, bool]]] = defaultdict(list)
 
     n = len(ds)
     t_start = time.perf_counter()
@@ -364,6 +403,96 @@ def run_extraction(args: argparse.Namespace, ds) -> Tuple[List[Dict[str, Any]], 
                 dt_ms,
                 _gpu_mem_summary(),
             )
+
+    total_seconds = time.perf_counter() - t_start
+    return predictions_rows, dict(latencies_by_bucket), total_seconds
+
+
+def _run_extraction_batch(args: argparse.Namespace, ds, queries: Dict[str, str]) -> Tuple[List[Dict[str, Any]], Dict[str, List[Tuple[float, bool]]], float]:
+    from funding_statement_extractor.statements.batch_extraction import (
+        DocPayload,
+        extract_funding_statements_batch,
+    )
+
+    n = len(ds)
+    predictions_rows: List[Dict[str, Any]] = []
+    latencies_by_bucket: Dict[str, List[Tuple[float, bool]]] = defaultdict(list)
+
+    def docs_iter():
+        for i, row in enumerate(ds):
+            yield DocPayload(
+                doc_id=row["file"],
+                text=row["text"],
+                metadata={
+                    "row_idx": i,
+                    "bucket": bucket_for(row),
+                    "category": row["category"],
+                    "found": bool(row.get("found")),
+                    "gold_statements": list(row.get("statements") or []),
+                    "text_length": len(row["text"]),
+                },
+            )
+
+    t_start = time.perf_counter()
+    yielded = 0
+    for result in extract_funding_statements_batch(
+        documents=docs_iter(),
+        queries=queries,
+        model_name=args.colbert_model,
+        top_k=args.top_k,
+        threshold=args.threshold,
+        enable_paragraph_prefilter=args.enable_paragraph_prefilter,
+        regex_match_score_floor=args.regex_match_score_floor,
+        paragraphs_per_batch=args.paragraphs_per_batch,
+        encode_batch_size=args.encode_batch_size,
+        workers=args.engine_workers,
+        queue_depth=args.queue_depth,
+        dtype=args.dtype,
+    ):
+        meta = result.metadata or {}
+        bucket = meta.get("bucket", "unknown")
+        warmup = (yielded == 0)
+        # End-to-end queueing-aware latency
+        dt_ms = (result.yield_ts - result.enqueue_ts) * 1000.0
+        latencies_by_bucket[bucket].append((dt_ms, warmup))
+
+        predictions_rows.append(
+            {
+                "file": result.doc_id,
+                "bucket": bucket,
+                "category": meta.get("category"),
+                "found": meta.get("found", False),
+                "gold_statements": meta.get("gold_statements", []),
+                "predicted_statements": [s.statement for s in result.statements],
+                "predicted_details": [
+                    {
+                        "statement": s.statement,
+                        "score": float(s.score),
+                        "query": s.query,
+                        "paragraph_idx": s.paragraph_idx,
+                    }
+                    for s in result.statements
+                ],
+                "text_length": meta.get("text_length", 0),
+                "latency_ms": dt_ms,
+                "warmup": warmup,
+                "error": result.error,
+            }
+        )
+        yielded += 1
+        if yielded % args.log_every == 0 or yielded == n:
+            logger.info(
+                "[%d/%d] bucket=%s n_pred=%d dt=%.0fms %s",
+                yielded,
+                n,
+                bucket,
+                len(result.statements),
+                dt_ms,
+                _gpu_mem_summary(),
+            )
+
+    # Sort by (bucket, file) for stable per-bucket metrics and easy diffing against legacy runs
+    predictions_rows.sort(key=lambda r: (r.get("bucket") or "", r["file"]))
 
     total_seconds = time.perf_counter() - t_start
     return predictions_rows, dict(latencies_by_bucket), total_seconds
