@@ -1,12 +1,11 @@
-"""Checkpoint persistence utilities."""
 import os
 import json
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from funding_extractor.exceptions import CheckpointError
+from funding_statement_extractor.exceptions import CheckpointError
 
 
 def get_file_hash(file_path: str) -> str:
@@ -40,7 +39,7 @@ class CheckpointRepository:
             with open(temp_file, "w", encoding="utf-8") as fh:
                 json.dump(self.data, fh, indent=2)
             os.replace(temp_file, self.checkpoint_path)
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             raise CheckpointError(f"Failed to write checkpoint: {exc}") from exc
 
     def is_processed(self, doc_hash: str) -> bool:

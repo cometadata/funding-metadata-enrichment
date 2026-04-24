@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from funding_extractor.exceptions import DocumentLoadError
+from funding_statement_extractor.exceptions import DocumentLoadError
 
 
 def find_markdown_files(directory: str) -> List[str]:

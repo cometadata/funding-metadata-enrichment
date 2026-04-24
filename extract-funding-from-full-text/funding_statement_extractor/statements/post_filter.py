@@ -1,7 +1,7 @@
 import re
 from typing import List, Tuple
 
-from funding_extractor.core.models import FundingStatement
+from funding_statement_extractor.statements.models import FundingStatement
 
 
 GRANT_NUMBER_PATTERNS = [
@@ -52,7 +52,6 @@ AUTHOR_SPECIFIC_PATTERNS = [
     r'\bthe\s+(?:first|second|third)\s+author\s+(?:is|was)\s+supported',
 ]
 
-# Negative patterns
 CITATION_PATTERNS = [
     r'^\s*\[\d+\]',
     r'^\s*\d+\.\s+[A-Z][a-z]+',

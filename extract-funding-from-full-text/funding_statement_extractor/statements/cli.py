@@ -1,66 +1,47 @@
-import os
-import sys
-import json
 import argparse
+import concurrent.futures
 import logging
 import multiprocessing
-import concurrent.futures
-from pathlib import Path
+import os
+import sys
 from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional, Tuple
 
-from funding_extractor.config.loader import load_queries
-from funding_extractor.config.settings import (
+from funding_statement_extractor.config.loader import load_queries
+from funding_statement_extractor.config.settings import (
     ApplicationConfig,
     ConfigPaths,
     ExtractionSettings,
     InputSettings,
     OutputSettings,
     ProcessingSettings,
-    ProviderSettings,
     RuntimeSettings,
 )
-from funding_extractor.core.extraction import extract_funding_statements
-from funding_extractor.core.models import ExtractionResult, DocumentResult, ProcessingParameters, ProcessingResults
-from funding_extractor.core.structured_extraction import extract_structured_entities
-from funding_extractor.exceptions import ConfigurationError
-from funding_extractor.io.checkpointing import CheckpointRepository, get_file_hash
-from funding_extractor.io.loaders import (
+from funding_statement_extractor.exceptions import ConfigurationError
+from funding_statement_extractor.io.checkpointing import CheckpointRepository, get_file_hash
+from funding_statement_extractor.io.loaders import (
     DocumentPayload,
     build_markdown_documents,
     determine_input_format,
     stream_parquet_documents,
 )
-from funding_extractor.processing.markdown_healer import heal_markdown
-from funding_extractor.processing.normalization import (
+from funding_statement_extractor.processing.normalization import (
     is_improperly_formatted,
     normalize_funding_statement,
 )
-from funding_extractor.providers.base import ModelProvider
+from funding_statement_extractor.statements.extraction import extract_funding_statements
+from funding_statement_extractor.statements.io import load_existing_results, save_results
+from funding_statement_extractor.statements.models import (
+    DocumentResult,
+    ProcessingParameters,
+    ProcessingResults,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Extract funding information from markdown documents",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Process a single markdown file
-  %(prog)s -i document.md -o results.json
-
-  # Process a directory with Gemini
-  %(prog)s -i /path/to/md/files -o results.json --provider gemini --api-key YOUR_KEY
-
-  # Use an Ollama model with normalization
-  %(prog)s -i docs/ -o results.json --provider ollama --model llama3.2 --normalize
-
-  # Skip structured extraction (only extract funding statements)
-  %(prog)s -i docs/ -o results.json --skip-structured
-        """,
-    )
-
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-i", "--input", required=True, help="Input markdown file, directory, or parquet dataset")
     parser.add_argument("-o", "--output", default="funding_results.json", help="Output JSON file (default: funding_results.json)")
     parser.add_argument("--input-format", choices=["markdown", "parquet"], help="Force the input format instead of auto-detecting")
@@ -73,23 +54,9 @@ Examples:
     parser.add_argument("-q", "--queries", help="YAML file containing search queries (uses defaults if not provided)")
     parser.add_argument("--config-dir", help="Custom directory containing configuration files")
     parser.add_argument("--patterns-file", help="YAML file containing funding detection patterns")
-    parser.add_argument("--prompt-file", help="Text file containing extraction prompt")
-    parser.add_argument("--examples-file", help="JSON file containing extraction examples")
 
     parser.add_argument("--normalize", action="store_true", help="Normalize funding statements (fix whitespace, accents, etc.)")
-    parser.add_argument("--heal-markdown", action="store_true", help="Reflow markdown converted from PDFs before parsing")
     parser.add_argument("--skip-extraction", action="store_true", help="Skip semantic extraction (use existing results file)")
-    parser.add_argument("--skip-structured", action="store_true", help="Skip structured entity extraction (only extract statements)")
-
-    parser.add_argument(
-        "--provider",
-        choices=["gemini", "ollama", "openai", "local_openai"],
-        default="gemini",
-        help="LLM provider for structured extraction (default: gemini)",
-    )
-    parser.add_argument("--model", help="Model ID to use (defaults to provider default)")
-    parser.add_argument("--model-url", help="API endpoint URL (for ollama or local_openai)")
-    parser.add_argument("--api-key", help="API key for the model provider")
 
     parser.add_argument(
         "--colbert-model",
@@ -103,16 +70,12 @@ Examples:
 
     parser.add_argument("--batch-size", type=int, default=10, help="Number of documents to process per batch (default: 10)")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (auto-detected if not specified)")
-    parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds for LLM requests (default: 60)")
 
     parser.add_argument("--checkpoint-file", help="Checkpoint file for saving progress")
     parser.add_argument("--resume", action="store_true", help="Resume from previous checkpoint")
     parser.add_argument("--force", action="store_true", help="Force reprocessing of all files (ignore checkpoint)")
 
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--skip-model-validation", action="store_true", help="Skip model validation checks")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output from langextract")
-    return parser.parse_args()
 
 
 def build_config(args: argparse.Namespace) -> ApplicationConfig:
@@ -137,20 +100,9 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
         ),
         processing=ProcessingSettings(
             normalize=args.normalize,
-            heal_markdown=args.heal_markdown,
             skip_extraction=args.skip_extraction,
-            skip_structured=args.skip_structured,
             enable_pattern_rescue=args.enable_pattern_rescue,
             enable_post_filter=args.enable_post_filter,
-        ),
-        provider=ProviderSettings(
-            provider=ModelProvider(args.provider),
-            model_id=args.model,
-            model_url=args.model_url,
-            api_key=args.api_key,
-            timeout=args.timeout,
-            skip_model_validation=args.skip_model_validation,
-            debug=getattr(args, "debug", False),
         ),
         runtime=RuntimeSettings(
             batch_size=args.batch_size,
@@ -163,29 +115,9 @@ def build_config(args: argparse.Namespace) -> ApplicationConfig:
             queries_file=Path(args.queries) if args.queries else None,
             config_dir=Path(args.config_dir) if args.config_dir else None,
             patterns_file=Path(args.patterns_file) if args.patterns_file else None,
-            prompt_file=Path(args.prompt_file) if args.prompt_file else None,
-            examples_file=Path(args.examples_file) if args.examples_file else None,
         ),
     )
     return config
-
-
-def load_existing_results(output_file: Path) -> Optional[ProcessingResults]:
-    if output_file.exists():
-        try:
-            with open(output_file, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                return ProcessingResults.from_dict(data)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("Warning: Could not load existing results: %s", exc)
-    return None
-
-
-def save_results(results: ProcessingResults, output_file: Path) -> None:
-    temp_file = str(output_file) + ".tmp"
-    with open(temp_file, "w", encoding="utf-8") as fh:
-        json.dump(results.to_dict(), fh, indent=2, ensure_ascii=False)
-    os.replace(temp_file, output_file)
 
 
 def process_document_task(document: DocumentPayload, config: ApplicationConfig, queries: Dict[str, str]) -> Optional[DocumentResult]:
@@ -195,94 +127,57 @@ def process_document_task(document: DocumentPayload, config: ApplicationConfig, 
 
     result = DocumentResult(filename=document.document_id)
 
-    if not config.processing.skip_extraction:
-        try:
-            content = document.load_text()
-        except Exception as exc:
-            print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
-            return None
+    if config.processing.skip_extraction:
+        return result
 
-        if config.processing.heal_markdown:
-            content = heal_markdown(content)
+    try:
+        content = document.load_text()
+    except Exception as exc:
+        print(f"  Warning: Failed to read content for {document.document_id}: {exc}")
+        return None
 
-        statements = extract_funding_statements(
-            content=content,
-            queries=queries,
-            model_name=config.extraction.colbert_model,
-            top_k=config.extraction.top_k,
-            threshold=config.extraction.threshold,
-            batch_size=config.extraction.semantic_batch_size,
-            patterns_file=str(config.config_paths.patterns_file) if config.config_paths.patterns_file else None,
-            custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
-            enable_pattern_rescue=config.processing.enable_pattern_rescue,
+    statements = extract_funding_statements(
+        content=content,
+        queries=queries,
+        model_name=config.extraction.colbert_model,
+        top_k=config.extraction.top_k,
+        threshold=config.extraction.threshold,
+        batch_size=config.extraction.semantic_batch_size,
+        patterns_file=str(config.config_paths.patterns_file) if config.config_paths.patterns_file else None,
+        custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
+        enable_pattern_rescue=config.processing.enable_pattern_rescue,
+    )
+
+    if config.processing.enable_post_filter and statements:
+        from funding_statement_extractor.statements.post_filter import apply_post_filter
+        statements = apply_post_filter(
+            statements,
+            high_confidence_threshold=30.0,
+            low_confidence_threshold=10.0,
         )
 
-        # Apply post-filter if enabled
-        if config.processing.enable_post_filter and statements:
-            from funding_extractor.core.post_filter import apply_post_filter
-            statements = apply_post_filter(
-                statements,
-                high_confidence_threshold=30.0,
-                low_confidence_threshold=10.0,
-            )
+    if not statements:
+        if verbose:
+            print(f"  No funding statements found in {document.document_id}")
+        result.funding_statements = []
+        return result
 
-        if not statements:
-            if verbose:
-                print(f"  No funding statements found in {document.document_id}")
-            result.funding_statements = []
-            result.extraction_results = []
-            return result
+    for stmt in statements:
+        if config.processing.normalize:
+            normalized = normalize_funding_statement(stmt.statement)
+            stmt.original = stmt.statement
+            stmt.statement = normalized
 
+        if is_improperly_formatted(stmt.statement):
+            stmt.is_problematic = True
+
+    result.funding_statements = statements
+
+    if verbose:
+        print(f"  Found {len(statements)} funding statements")
         for stmt in statements:
-            if config.processing.normalize:
-                normalized = normalize_funding_statement(stmt.statement)
-                stmt.original = stmt.statement
-                stmt.statement = normalized
-
-            if is_improperly_formatted(stmt.statement):
-                stmt.is_problematic = True
-
-        result.funding_statements = statements
-
-        if verbose:
-            print(f"  Found {len(statements)} funding statements")
-            for stmt in statements:
-                preview = stmt.statement.replace('\n', ' ')[:240]
-                print(f"    [{stmt.score:.1f}] {preview}")
-
-    if not config.processing.skip_structured and result.funding_statements:
-        unique_statements = list(set(stmt.statement for stmt in result.funding_statements))
-
-        extraction_results: List[ExtractionResult] = []
-        for statement in unique_statements:
-            if verbose:
-                print("  Extracting entities from statement...")
-
-            try:
-                extraction_result = extract_structured_entities(
-                    funding_statement=statement,
-                    provider=config.provider.provider,
-                    model_id=config.provider.model_id,
-                    model_url=config.provider.model_url,
-                    api_key=config.provider.api_key,
-                    skip_model_validation=config.provider.skip_model_validation,
-                    timeout=config.provider.timeout,
-                    debug=config.provider.debug,
-                    prompt_file=str(config.config_paths.prompt_file) if config.config_paths.prompt_file else None,
-                    examples_file=str(config.config_paths.examples_file) if config.config_paths.examples_file else None,
-                    custom_config_dir=str(config.config_paths.config_dir) if config.config_paths.config_dir else None,
-                )
-                extraction_results.append(extraction_result)
-            except Exception as exc:
-                print(f"  Warning: Entity extraction failed: {exc}")
-
-        result.extraction_results = extraction_results
-
-        if verbose:
-            total_funders = sum(len(r.funders) for r in extraction_results)
-            print(f"  Extracted {total_funders} funders from {len(extraction_results)} statements")
-    else:
-        result.extraction_results = result.extraction_results or []
+            preview = stmt.statement.replace('\n', ' ')[:240]
+            print(f"    [{stmt.score:.1f}] {preview}")
 
     return result
 
@@ -374,9 +269,6 @@ class FundingExtractorApp:
                 input_path=str(cfg.input.path),
                 input_format=input_format,
                 normalize=cfg.processing.normalize,
-                heal_markdown=cfg.processing.heal_markdown,
-                provider=cfg.provider.provider.value if not cfg.processing.skip_structured else None,
-                model=cfg.provider.model_id if not cfg.processing.skip_structured else None,
                 threshold=cfg.extraction.threshold,
                 top_k=cfg.extraction.top_k,
             ),
@@ -412,22 +304,18 @@ class FundingExtractorApp:
 
         def apply_document_result(doc: DocumentResult) -> None:
             summary = results.summary or {}
-            for key in ("total_files", "files_with_funding", "total_statements", "total_funders"):
+            for key in ("total_files", "files_with_funding", "total_statements"):
                 summary.setdefault(key, 0)
 
             existing = results.results.get(doc.filename)
             if existing:
                 summary["total_statements"] -= len(existing.funding_statements)
-                existing_funders = sum(len(res.funders) for res in existing.extraction_results)
-                summary["total_funders"] -= existing_funders
                 if existing.has_funding():
                     summary["files_with_funding"] -= 1
             else:
                 summary["total_files"] += 1
 
             summary["total_statements"] += len(doc.funding_statements)
-            new_funders = sum(len(res.funders) for res in doc.extraction_results)
-            summary["total_funders"] += new_funders
             if doc.has_funding():
                 summary["files_with_funding"] += 1
 
@@ -485,7 +373,7 @@ class FundingExtractorApp:
                     continue
                 try:
                     doc_result = future.result()
-                except Exception as exc:  # pylint: disable=broad-except
+                except Exception as exc:
                     print(f"  Error processing {metadata['document_id']}: {exc}")
                     doc_result = None
                 handle_completed(metadata, doc_result)
@@ -523,7 +411,7 @@ class FundingExtractorApp:
                             continue
                         try:
                             doc_result = future.result()
-                        except Exception as exc:  # pylint: disable=broad-except
+                        except Exception as exc:
                             print(f"  Error processing {metadata['document_id']}: {exc}")
                             doc_result = None
                         handle_completed(metadata, doc_result)
@@ -556,15 +444,10 @@ class FundingExtractorApp:
         print(f"Total documents processed: {results.summary.get('total_files', 0)}")
         print(f"Documents with funding: {results.summary.get('files_with_funding', 0)}")
         print(f"Total statements: {results.summary.get('total_statements', 0)}")
-        if not cfg.processing.skip_structured:
-            print(f"Total funders: {results.summary.get('total_funders', 0)}")
         print(f"\nResults saved to: {cfg.output.output_path}")
 
 
-def main() -> None:
-    args = parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO if args.verbose else logging.WARNING)
-
+def run(args: argparse.Namespace) -> None:
     config = build_config(args)
     try:
         config.validate()
@@ -583,8 +466,3 @@ def main() -> None:
 
     app = FundingExtractorApp(config=config, queries=queries)
     app.run()
-
-
-if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn", force=True)
-    main()

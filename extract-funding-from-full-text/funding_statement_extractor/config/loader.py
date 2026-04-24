@@ -1,16 +1,15 @@
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-from funding_extractor.exceptions import ConfigurationError
+from funding_statement_extractor.exceptions import ConfigurationError
 
 
 def _base_config_dir(custom_config_dir: Optional[str] = None) -> Path:
     if custom_config_dir:
         return Path(custom_config_dir)
-    return Path(__file__).resolve().parents[2] / "configs"
+    return Path(__file__).resolve().parents[1] / "configs"
 
 
 def get_config_path(config_type: str, filename: str, custom_config_dir: Optional[str] = None) -> Path:
@@ -33,39 +32,6 @@ def load_queries(queries_file: Optional[str] = None, custom_config_dir: Optional
     with open(config_path, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
         return data.get("queries", {})
-
-
-def load_extraction_prompt(prompt_file: Optional[str] = None, custom_config_dir: Optional[str] = None) -> str:
-    if prompt_file:
-        config_path = Path(prompt_file)
-    else:
-        config_path = get_config_path("prompts", "extraction_prompt.txt", custom_config_dir)
-
-    if not config_path.exists():
-        raise ConfigurationError(
-            f"Extraction prompt file not found at '{config_path}'. "
-            "Provide --prompt-file or place extraction_prompt.txt under configs/prompts."
-        )
-
-    return config_path.read_text(encoding="utf-8")
-
-
-def load_extraction_examples(
-    examples_file: Optional[str] = None, custom_config_dir: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    if examples_file:
-        config_path = Path(examples_file)
-    else:
-        config_path = get_config_path("prompts", "extraction_examples.json", custom_config_dir)
-
-    if not config_path.exists():
-        raise ConfigurationError(
-            f"Extraction examples file not found at '{config_path}'. "
-            "Provide --examples-file or place extraction_examples.json under configs/prompts."
-        )
-
-    with open(config_path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
 
 
 def load_funding_patterns(

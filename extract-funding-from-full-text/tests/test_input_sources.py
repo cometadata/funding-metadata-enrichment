@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from funding_extractor.io.loaders import determine_input_format, stream_parquet_documents
+from funding_statement_extractor.io.loaders import determine_input_format, stream_parquet_documents
 
 
 class FakeScalar:
