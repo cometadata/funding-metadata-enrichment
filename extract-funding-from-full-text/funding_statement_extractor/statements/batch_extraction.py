@@ -50,6 +50,24 @@ class _PostIn:
     gpu_ms: float
 
 
+def _length_sort_permutation(paragraphs: List[str]) -> List[int]:
+    """Return indices that sort paragraphs by character count (cheap proxy for token count).
+
+    Used so each model.encode sub-batch contains similar-length paragraphs and pads
+    minimally. Stable sort so ties are deterministic.
+    """
+    return sorted(range(len(paragraphs)), key=lambda i: len(paragraphs[i]))
+
+
+def _apply_inverse_permutation(items: List[Any], perm: List[int]) -> List[Any]:
+    """Reverse the permutation: items[i] is the value at sorted position i;
+    return a list where position perm[i] holds items[i]."""
+    out: List[Any] = [None] * len(items)
+    for sorted_pos, original_pos in enumerate(perm):
+        out[original_pos] = items[sorted_pos]
+    return out
+
+
 def _pre_task(doc: DocPayload, *, enable_paragraph_prefilter: bool) -> _PreOut:
     t0 = time.perf_counter()
     try:

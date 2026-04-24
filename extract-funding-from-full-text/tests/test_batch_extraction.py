@@ -13,6 +13,8 @@ from funding_statement_extractor.statements.batch_extraction import (
     _PreOut,
     _PostIn,
     _post_task,
+    _length_sort_permutation,
+    _apply_inverse_permutation,
 )
 from funding_statement_extractor.statements.extraction import (
     SemanticExtractionService,
@@ -224,3 +226,20 @@ def test_post_task_paragraph_idx_uses_original_index():
     )
     assert len(result.statements) == 1
     assert result.statements[0].paragraph_idx == 2
+
+
+def test_length_sort_permutation_orders_by_length():
+    paras = ["abc", "a", "abcdef", "ab"]
+    perm = _length_sort_permutation(paras)
+    sorted_paras = [paras[i] for i in perm]
+    assert [len(p) for p in sorted_paras] == sorted(len(p) for p in paras)
+
+
+def test_apply_inverse_permutation_round_trips():
+    paras = ["aaa", "b", "cc", "dddd"]
+    perm = _length_sort_permutation(paras)
+    sorted_paras = [paras[i] for i in perm]
+    fake_embeddings = [f"emb({p})" for p in sorted_paras]
+    unsorted = _apply_inverse_permutation(fake_embeddings, perm)
+    expected = [f"emb({p})" for p in paras]
+    assert unsorted == expected
