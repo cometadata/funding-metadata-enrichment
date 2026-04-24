@@ -455,3 +455,85 @@ def test_batch_engine_byte_identical_to_per_doc_api(monkeypatch):
             assert b.score == l.score, f"{doc_id}: score mismatch"
             assert b.query == l.query, f"{doc_id}: query mismatch"
             assert b.paragraph_idx == l.paragraph_idx, f"{doc_id}: paragraph_idx mismatch"
+
+
+def test_batch_engine_recovers_from_post_worker_failure(monkeypatch):
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+
+    # Wrap _post_task_in_worker so doc 'd_bad' raises
+    real_post = bx._post_task_in_worker
+    def flaky_post(item, **kw):
+        if item.pre.doc.doc_id == "d_bad":
+            raise RuntimeError("simulated post failure")
+        return real_post(item, **kw)
+    monkeypatch.setattr(bx, "_post_task_in_worker", flaky_post)
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+
+    docs = [
+        DocPayload(doc_id="d_ok1", text="Supported by NSF grant 1.\n\nMore."),
+        DocPayload(doc_id="d_bad", text="Supported by NSF grant 2.\n\nMore."),
+        DocPayload(doc_id="d_ok2", text="Supported by NSF grant 3.\n\nMore."),
+    ]
+    results = {r.doc_id: r for r in bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=8, encode_batch_size=4, workers=2, queue_depth=4,
+        enable_paragraph_prefilter=False,
+    )}
+    assert set(results) == {"d_ok1", "d_bad", "d_ok2"}
+    assert results["d_bad"].error is not None
+    assert "simulated post failure" in results["d_bad"].error
+    assert results["d_ok1"].error is None
+    assert results["d_ok2"].error is None
+
+
+def test_batch_engine_handles_pathological_docs(monkeypatch):
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+
+    docs = [
+        DocPayload(doc_id="empty", text=""),
+        DocPayload(doc_id="single_para", text="single paragraph no breaks"),
+        DocPayload(doc_id="unicode", text="Заголовок.\n\nGrant from РНФ 22-11-00001.\n\nКонец."),
+        DocPayload(doc_id="huge", text="\n\n".join(["Lorem ipsum."] * 5000)),
+    ]
+    results = {r.doc_id: r for r in bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=64, encode_batch_size=16, workers=2, queue_depth=8,
+        enable_paragraph_prefilter=False,
+    )}
+    assert set(results) == {"empty", "single_para", "unicode", "huge"}
+    assert all(r.error is None for r in results.values())
+
+
+def test_batch_engine_clean_shutdown_on_generator_close(monkeypatch):
+    """Caller closes the generator early - engine should not hang."""
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+    model = FakeColBERT(dim=8)
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+
+    docs = [DocPayload(doc_id=f"d{i}", text=f"Para.\n\nGrant {i}.") for i in range(20)]
+    gen = bx.extract_funding_statements_batch(
+        documents=iter(docs), queries={"q1": "funding statement"},
+        paragraphs_per_batch=8, encode_batch_size=4, workers=2, queue_depth=4,
+        enable_paragraph_prefilter=False,
+    )
+    # consume only 3, then close
+    consumed = []
+    for _ in range(3):
+        consumed.append(next(gen))
+    gen.close()
+    assert len(consumed) == 3

@@ -585,6 +585,26 @@ def extract_funding_statements_batch(
         raise
     finally:
         shutdown.set()
+        # Drainer thread: during shutdown, pool workers and dispatcher threads
+        # may be blocked on queue.put(block=True) because nothing is consuming
+        # pre_out / post_in / done anymore. Drain them continuously so those
+        # puts unblock, letting pool.join and thread joins complete.
+        drain_stop = threading.Event()
+        def drainer():
+            qs = (pre_in, pre_out, post_in, done)
+            while not drain_stop.is_set():
+                drained = False
+                for q in qs:
+                    try:
+                        while True:
+                            q.get_nowait()
+                            drained = True
+                    except queue.Empty:
+                        pass
+                if not drained:
+                    time.sleep(0.01)
+        drain_thread = threading.Thread(target=drainer, name="shutdown_drainer", daemon=True)
+        drain_thread.start()
         try:
             pool.close()
             pool.join()
@@ -592,3 +612,5 @@ def extract_funding_statements_batch(
             pool.terminate()
         for t in threads:
             t.join(timeout=5.0)
+        drain_stop.set()
+        drain_thread.join(timeout=1.0)
