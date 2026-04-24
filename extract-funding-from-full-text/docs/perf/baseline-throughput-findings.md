@@ -205,7 +205,40 @@ The 1 statement Tier 2 lost on the 50-doc sample (doc 11) was:
 
 > "This publication is part of the R+D+i project PID2020-117868GB-I00, financed by MCIN / AEI / 10.13039 / 501100011033 /."
 
-The prefilter regex matches `fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial`. The paragraph contains "financed" — the regex catches "financial\w*" but not "financ\w*". Adding `financ` to the prefilter list would catch this case. Recommend running `scripts/benchmark_hf_job.py --enable-paragraph-prefilter` against the held-out test split to size the recall delta on a larger sample before committing to the keyword set; if recall slips more than 1–2 pts, expand the keyword list (start with `financ`, `donat`, `endow`, `subsid`).
+The prefilter regex matches `fund|grant|support|acknowledg|award|sponsor|thank|scholarship|fellowship|financial`. The paragraph contains "financed" — the original regex caught `financial\w*` but not `financ\w*`. Updated to `financ\w*` plus a tuned set against the train gold (see next section).
+
+### Tier 2 prefilter tuning + held-out test results
+
+Mined train gold (13,375 funding statements across `data/train.jsonl` + `arxiv-latex-extract/train.jsonl`) for keywords the original regex missed. Original v1 covered 96.17% of statements; an iterated v3.5 covers 98.02%, gained by adding stem expansions (`financ`, `grate`, `gratitude`, `foundation`), funding-agency acronyms (NSF, NSFC, NIH, NASA, ESA, CNES, DOE, ERC, EPSRC, DFG, JSPS, MCIN, AEI, FAPESP, CNPq, JPL, CSIC, CONICET, CONACYT, RFBR, HFSP, JST, MEXT, KAKENHI), and funding-specific multi-word phrases (`in (the) framework/scope/context of`, `is part of the project/research/R+D+i`, `carried out within/as/in/during`, `state assignment` / `госзадания`). v3.5's paragraph survival rate is 5.83% with ±1 neighbor expansion (vs 4.72% for v1) — a 1.1pt cost for a 1.85pt recall gain on the regex itself.
+
+End-to-end test results (n=3580 docs from `data/test.jsonl` + `arxiv-latex-extract/test.jsonl`, H200 bf16 BS=512, full benchmark_hf_job.py pipeline):
+
+| Bucket | n | Tier 1 P/R/F1 | Tier 2 P/R/F1 | ΔP | ΔR | ΔF1 | p50 speedup |
+|---|---:|---|---|---:|---:|---:|---:|
+| overall | 3580 | 0.878 / 0.906 / 0.892 | 0.834 / 0.907 / 0.869 | −0.044 | +0.001 | −0.023 | 4.4× |
+| clean | 1045 | 0.880 / 0.930 / 0.905 | 0.813 / 0.930 / 0.867 | −0.067 |  0.000 | −0.038 | 4.7× |
+| clean_relocated | 339 | 0.902 / 0.906 / 0.904 | 0.876 / 0.904 / 0.890 | −0.026 | −0.002 | −0.014 | 4.8× |
+| mild | 549 | 0.870 / 0.898 / 0.884 | 0.830 / 0.898 / 0.863 | −0.040 | 0.000 | −0.021 | 4.5× |
+| medium | 549 | 0.875 / 0.900 / 0.887 | 0.828 / 0.900 / 0.862 | −0.047 | 0.000 | −0.025 | 4.4× |
+| heavy | 549 | 0.871 / 0.884 / 0.877 | 0.829 / 0.888 / 0.857 | −0.042 | +0.004 | −0.020 | 4.1× |
+| combined | 549 | 0.869 / 0.898 / 0.883 | 0.839 / 0.900 / 0.868 | −0.030 | +0.002 | −0.015 | 4.1× |
+
+Aggregated across the user-requested clean + arxiv-latex-extract scope (n=1384, weighted): Tier 1 P=0.885 / R=0.924 / F1=0.905, Tier 2 P=0.828 / R=0.924 / F1=0.873 — **ΔP=−0.057, ΔR=0.000, ΔF1=−0.032**.
+
+End-to-end throughput (full pipeline including rapidfuzz eval): Tier 1 4.91 docs/sec / 729 s wall / 2890 MB peak GPU. Tier 2 23.70 docs/sec / 151 s wall / 1946 MB peak. **4.83× speedup**, 33% less GPU memory.
+
+**Findings:**
+- Recall is essentially preserved (0.000 to ±0.004 across buckets) — the v3.5 regex tuning succeeded at its goal.
+- Precision drops 4–7 pts because shrinking the candidate pool from ~300 paragraphs to ~10 (the prefilter result) raises the per-query top-k selection rate from ~1.7% to ~50%. Borderline paragraphs that previously sat outside the top-5 now make the cut and the post-filter `_is_likely_funding_statement` doesn't catch them all.
+- Net F1 cost is 1–4 pts depending on bucket. On the clean+arxiv-latex-extract aggregate, F1 drops 3.2 pts.
+
+**Trade-off:** at $5/hr H200, processing 14,261 train docs costs ~$3.69 with Tier 2 vs ~$17.80 baseline. Whether the 3.2-pt F1 cost is worth a 4.8× speedup depends on the downstream consumer; if recall matters more than precision (e.g. funding-statement recall feeds a downstream pattern-rescue or deduper that tolerates noise), Tier 2 is a clear win. For balanced F1 use cases, consider one of:
+
+1. **Raise threshold for prefiltered runs**: with ~10 candidates instead of ~300, raising `--threshold` from 10.0 to ~12–14 would prune most of the borderline false positives without hurting recall. Cheap to test.
+2. **Tighten the prefilter**: drop the multi-word phrases (state assignment / framework of / etc.) to recover precision at the cost of ~0.5pt recall.
+3. **Run Tier 2 as a candidate generator + Tier 1 as a verification pass** on the survivors. Complexity tradeoff; only worth it if Tier 2-alone precision is unacceptable.
+
+Reports for these runs are in the `cometadata/arxiv-funding-statement-retrieval-extractions` Hub repo (predictions/metrics for `test-tier1-noprefilter` and `test-tier2-prefilter`); local logs were captured but not checked in (large).
 
 ## Reproducibility
 
