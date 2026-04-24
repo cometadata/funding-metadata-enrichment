@@ -167,6 +167,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Comma-separated JSONL sub-dirs to fold together into one split.",
     )
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--exclude-augmented", action="store_true",
+                        help="Drop rows with augmentation != None (keep only clean + clean_relocated). For tuning on un-degraded text.")
 
     parser.add_argument("--colbert-model", default="lightonai/GTE-ModernColBERT-v1")
     parser.add_argument("--top-k", type=int, default=5)
@@ -464,6 +466,7 @@ def build_run_config(args: argparse.Namespace, n_rows: int, total_seconds: float
         "enable_post_filter": args.enable_post_filter,
         "enable_paragraph_prefilter": args.enable_paragraph_prefilter,
         "regex_match_score_floor": args.regex_match_score_floor,
+        "exclude_augmented": args.exclude_augmented,
         "dtype": args.dtype,
         "similarity_threshold": args.similarity_threshold,
         "dataset": args.dataset,
@@ -560,6 +563,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     subdirs = [s.strip() for s in args.subdirs.split(",") if s.strip()]
     ds = load_merged_split(args.dataset, args.split, subdirs)
+    if args.exclude_augmented:
+        before = len(ds)
+        ds = ds.filter(lambda row: row.get("augmentation") is None)
+        logger.info("filtered augmented rows: %d -> %d (kept clean + clean_relocated only)",
+                    before, len(ds))
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
         logger.info("capped to %d rows via --max-samples", len(ds))
