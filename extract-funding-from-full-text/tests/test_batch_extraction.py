@@ -264,10 +264,14 @@ class FakeColBERT:
         return iter(self._params)
 
     def encode(self, texts, batch_size=32, is_query=False, show_progress_bar=False):
-        rng = np.random.default_rng(0)
+        # Seed per-text so the same string always yields the same embedding
+        # regardless of call order or batching (required for batch-vs-per-doc
+        # byte-identity tests; rng-per-call would drift with paragraph ordering).
         out = []
         for t in texts:
             seq_len = max(2, min(len(t) // 5, 16))
+            seed = abs(hash(t)) % (2**32)
+            rng = np.random.default_rng(seed)
             out.append(rng.standard_normal((seq_len, self._dim)).astype(np.float32))
         if is_query:
             return out
@@ -398,3 +402,56 @@ def test_batch_engine_end_to_end_with_thread_pool(monkeypatch):
     assert all(r.error is None for r in results)
     # Timings populated
     assert all(r.timings is not None and "gpu_ms" in r.timings for r in results)
+
+
+def test_batch_engine_byte_identical_to_per_doc_api(monkeypatch):
+    from multiprocessing.dummy import Pool as ThreadPool
+    from funding_statement_extractor.statements import batch_extraction as bx
+    from funding_statement_extractor.statements import extraction as ex
+
+    bx._worker_init(patterns_file=None, custom_config_dir=None)
+
+    model = FakeColBERT(dim=16)
+
+    # Identical synthetic corpus
+    corpus = [
+        ("d1", "Random intro.\n\nThis work was supported by NSF grant DMR-1234567.\n\nConclusion."),
+        ("d2", "No funding here.\n\nMethods only.\n\nDiscussion."),
+        ("d3", "We acknowledge financial support from the European Research Council under grant 999.\n\nResults."),
+        ("d4", "Empty-ish."),
+        ("d5", "We thank the authors. This research used resources of the Argonne Leadership Computing Facility under contract DE-AC02-06CH11357."),
+    ]
+    docs = [DocPayload(doc_id=did, text=text) for did, text in corpus]
+    queries = {"q1": "funding statement"}
+
+    # Run via batch engine
+    monkeypatch.setattr(bx, "_get_or_load_model", lambda *a, **kw: model)
+    monkeypatch.setattr(bx, "_make_pool", lambda workers, init, args: ThreadPool(processes=workers))
+    batch_results = {r.doc_id: r for r in bx.extract_funding_statements_batch(
+        documents=iter(docs), queries=queries,
+        paragraphs_per_batch=64, encode_batch_size=8, workers=2, queue_depth=8,
+        enable_paragraph_prefilter=False,
+    )}
+
+    # Run via per-doc API on same model — patch the service's _get_model to return our fake
+    svc = ex.SemanticExtractionService()
+    monkeypatch.setattr(svc, "_get_model", lambda *a, **kw: model)
+    legacy_results = {}
+    for doc in docs:
+        stmts = svc.extract_funding_statements(
+            queries=queries, content=doc.text,
+            top_k=5, threshold=10.0, batch_size=8,
+            enable_paragraph_prefilter=False,
+        )
+        legacy_results[doc.doc_id] = stmts
+
+    # Compare per-doc, byte-identical
+    for doc_id, batch_res in batch_results.items():
+        legacy = legacy_results[doc_id]
+        assert len(batch_res.statements) == len(legacy), (
+            f"{doc_id}: count batch={len(batch_res.statements)} legacy={len(legacy)}")
+        for b, l in zip(batch_res.statements, legacy):
+            assert b.statement == l.statement, f"{doc_id}: text mismatch"
+            assert b.score == l.score, f"{doc_id}: score mismatch"
+            assert b.query == l.query, f"{doc_id}: query mismatch"
+            assert b.paragraph_idx == l.paragraph_idx, f"{doc_id}: paragraph_idx mismatch"
