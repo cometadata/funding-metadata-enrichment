@@ -14,6 +14,7 @@ from typing import List, Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from huggingface_hub import HfApi
 
 
 _DONE_RE = re.compile(
@@ -106,3 +107,30 @@ def parse_done_line(line):
         "rows": int(m.group("rows")),
         "elapsed_s": float(m.group("elapsed")),
     }
+
+
+def read_row_count_local(path):
+    """Footer-only row-count read of a local parquet (diagnostic helper)."""
+    return pq.ParquetFile(str(path)).metadata.num_rows
+
+
+def list_input_files_with_sizes(repo_id, subdir):
+    """Return [(in_repo_path, size_bytes), ...] for all .parquet files under repo_id/subdir.
+
+    Uses HfApi.list_repo_tree(recursive=True) so we get one indexed listing call
+    instead of 17k+ per-file footer reads.
+    """
+    api = HfApi()
+    out = []
+    for entry in api.list_repo_tree(
+        repo_id, path_in_repo=subdir, repo_type="dataset", recursive=True
+    ):
+        path = getattr(entry, "path", None)
+        size = getattr(entry, "size", None)
+        if path is None or size is None:
+            continue
+        if not path.endswith(".parquet"):
+            continue
+        out.append((path, int(size)))
+    out.sort(key=lambda t: t[0])
+    return out

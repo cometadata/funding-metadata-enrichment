@@ -11,6 +11,7 @@ from scripts.orchestrate_extractions import (
     parse_done_line,
     pick_next_batch,
     read_manifest,
+    read_row_count_local,
     update_ema,
     write_manifest,
 )
@@ -106,3 +107,37 @@ def test_parse_done_line():
 
 def test_parse_done_line_returns_none_on_no_match():
     assert parse_done_line("INFO some other log line") is None
+
+
+def test_read_row_count_from_footer(tmp_path):
+    p = tmp_path / "x.parquet"
+    pq.write_table(pa.table({"a": list(range(123))}), p)
+    assert read_row_count_local(p) == 123
+
+
+def test_list_input_files_with_sizes(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+
+    class FakeFile:
+        def __init__(self, path, size):
+            self.path = path
+            self.size = size
+
+    class FakeApi:
+        def list_repo_tree(self, repo_id, path_in_repo, repo_type, recursive):
+            assert repo_id == "org/repo"
+            assert path_in_repo == "results-2026-04-24"
+            assert repo_type == "dataset"
+            assert recursive is True
+            return iter([
+                FakeFile("results-2026-04-24/2024/arXiv_src_2401_001.parquet", 1_000_000),
+                FakeFile("results-2026-04-24/2024/arXiv_src_2401_002.parquet", 2_000_000),
+                FakeFile("results-2026-04-24/2024/some_other_file.txt", 500),
+            ])
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    out = mod.list_input_files_with_sizes("org/repo", "results-2026-04-24")
+    assert out == [
+        ("results-2026-04-24/2024/arXiv_src_2401_001.parquet", 1_000_000),
+        ("results-2026-04-24/2024/arXiv_src_2401_002.parquet", 2_000_000),
+    ]
