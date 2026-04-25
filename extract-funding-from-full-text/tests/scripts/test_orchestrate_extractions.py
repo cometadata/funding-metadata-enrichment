@@ -178,3 +178,52 @@ def test_reconcile_marks_done_when_output_exists():
     assert by["dir/a.parquet"].output_path == "predictions/a.parquet"
     assert by["dir/a.parquet"].completed_at is not None
     assert by["dir/b.parquet"].status == "pending"
+
+
+def test_submit_job_retries_429(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+    calls = {"n": 0, "sleeps": []}
+
+    class FakeJob:
+        id = "job-fake"
+
+    class FakeApi:
+        def run_job(self, **kw):
+            calls["n"] += 1
+            assert kw["flavor"] == "a100-large"
+            if calls["n"] < 3:
+                raise RuntimeError("HTTP 429 too many requests")
+            return FakeJob()
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    monkeypatch.setattr(mod.time, "sleep", lambda s: calls["sleeps"].append(s))
+
+    job_id = mod.submit_a100_job(
+        script_path="scripts/extract_funding_job.py",
+        worker_argv=["--input-repo", "x", "--input-files", "f.parquet",
+                     "--output-repo", "y", "--job-tag", "z"],
+        token="t", timeout="2h",
+    )
+    assert job_id == "job-fake"
+    assert calls["n"] == 3
+    assert calls["sleeps"] == [60, 60]
+
+
+def test_submit_job_gives_up_after_max_retries(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+    import pytest as _pytest
+
+    class FakeApi:
+        def run_job(self, **kw):
+            raise RuntimeError("HTTP 429")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    with _pytest.raises(RuntimeError):
+        mod.submit_a100_job(
+            script_path="scripts/extract_funding_job.py",
+            worker_argv=["--input-repo", "x", "--input-files", "f.parquet",
+                         "--output-repo", "y", "--job-tag", "z"],
+            token="t", timeout="2h", max_retries=3,
+        )

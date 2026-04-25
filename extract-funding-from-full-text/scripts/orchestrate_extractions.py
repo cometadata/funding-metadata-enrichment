@@ -6,8 +6,10 @@ with manifest-backed resume, retry, and EMA-based rebalancing.
 """
 from __future__ import annotations
 
+import base64
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -190,3 +192,40 @@ def list_existing_outputs(repo_id):
         if path and path.endswith(".parquet"):
             out.add(path)
     return out
+
+
+IMAGE = "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel"
+FLAVOR = "a100-large"
+
+
+def submit_a100_job(*, script_path, worker_argv, token, timeout="2h", max_retries=10):
+    """Submit one HF Job on the a100-large flavor; retry on 429.
+
+    The worker script is base64-encoded and shipped via the `bash -c ... uv run`
+    prelude required for the pytorch image (see CLAUDE.md HF Jobs invariants).
+    """
+    b64 = base64.b64encode(Path(script_path).read_bytes()).decode()
+    argv_str = " ".join(worker_argv)
+    cmd = ["bash", "-c",
+           "set -euxo pipefail && apt-get update -qq && apt-get install -y -qq git && "
+           "pip install --quiet --root-user-action=ignore uv && "
+           f"echo {b64} | base64 -d > /tmp/p.py && rm -rf /root/.cache/uv/environments-v2 && "
+           f"uv run /tmp/p.py {argv_str}"]
+    api = HfApi()
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            job = api.run_job(
+                image=IMAGE, command=cmd,
+                secrets={"HF_TOKEN": token},
+                flavor=FLAVOR, timeout=timeout,
+            )
+            return job.id
+        except Exception as exc:
+            last_exc = exc
+            if "429" in str(exc):
+                time.sleep(60)
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
