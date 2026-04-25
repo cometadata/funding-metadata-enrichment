@@ -227,3 +227,27 @@ def test_submit_job_gives_up_after_max_retries(monkeypatch):
                          "--output-repo", "y", "--job-tag", "z"],
             token="t", timeout="2h", max_retries=3,
         )
+
+
+def test_poll_job_state_parses_logs_and_status(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+
+    class FakeApi:
+        def inspect_job(self, job_id):
+            return SimpleNamespace(
+                status=SimpleNamespace(stage="COMPLETED"), id=job_id,
+            )
+
+        def fetch_job_logs(self, job_id):
+            yield SimpleNamespace(data="INFO booting...")
+            yield SimpleNamespace(data="[done file=a.parquet rows=10 elapsed_s=5.0]")
+            yield SimpleNamespace(data="[done file=b.parquet rows=20 elapsed_s=10.0]")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    state = mod.poll_job_state("job-x")
+    assert state.stage == "COMPLETED"
+    assert state.done_files == [
+        {"file": "a.parquet", "rows": 10, "elapsed_s": 5.0},
+        {"file": "b.parquet", "rows": 20, "elapsed_s": 10.0},
+    ]
+    assert state.last_log_ts is not None

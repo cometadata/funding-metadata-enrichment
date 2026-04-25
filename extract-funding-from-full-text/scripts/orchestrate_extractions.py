@@ -229,3 +229,34 @@ def submit_a100_job(*, script_path, worker_argv, token, timeout="2h", max_retrie
             raise
     assert last_exc is not None
     raise last_exc
+
+
+@dataclass
+class JobState:
+    stage: str           # e.g. RUNNING / COMPLETED / ERROR / CANCELED
+    done_files: list     # parsed [done ...] events
+    last_log_ts: Optional[float]
+
+
+def poll_job_state(job_id):
+    """Inspect job + tail its logs for [done ...] events.
+
+    Uses huggingface_hub.HfApi.inspect_job + fetch_job_logs (confirmed available
+    in the installed version). Transient log-fetch errors are swallowed so the
+    orchestrator can retry on its next poll.
+    """
+    api = HfApi()
+    info = api.inspect_job(job_id)
+    stage = getattr(info.status, "stage", None) or getattr(info, "status", "UNKNOWN")
+    done = []
+    last_ts: Optional[float] = None
+    try:
+        for entry in api.fetch_job_logs(job_id):
+            line = getattr(entry, "data", "") or ""
+            parsed = parse_done_line(line)
+            if parsed:
+                done.append(parsed)
+            last_ts = time.time()
+    except Exception:
+        pass
+    return JobState(stage=str(stage), done_files=done, last_log_ts=last_ts)
