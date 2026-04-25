@@ -7,12 +7,18 @@ with manifest-backed resume, retry, and EMA-based rebalancing.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+
+_DONE_RE = re.compile(
+    r"\[done file=(?P<file>\S+) rows=(?P<rows>\d+) elapsed_s=(?P<elapsed>[\d.]+)\]"
+)
 
 
 @dataclass
@@ -64,3 +70,39 @@ def write_manifest(rows: Manifest, path: Path) -> None:
 def read_manifest(path: Path) -> Manifest:
     tbl = pq.read_table(str(path))
     return [ManifestRow(**r) for r in tbl.to_pylist()]
+
+
+def pick_next_batch(rows, *, target_seconds, max_files):
+    pending = [r for r in rows if r.status == "pending"]
+    pending.sort(key=lambda r: r.est_seconds, reverse=True)
+    batch: list = []
+    total = 0.0
+    for r in pending:
+        if not batch:
+            batch.append(r)
+            total += r.est_seconds
+            continue
+        if total + r.est_seconds > target_seconds:
+            break
+        if len(batch) >= max_files:
+            break
+        batch.append(r)
+        total += r.est_seconds
+    return batch
+
+
+def update_ema(prev, sample, alpha):
+    if prev is None:
+        return sample
+    return (1 - alpha) * prev + alpha * sample
+
+
+def parse_done_line(line):
+    m = _DONE_RE.search(line)
+    if not m:
+        return None
+    return {
+        "file": m.group("file"),
+        "rows": int(m.group("rows")),
+        "elapsed_s": float(m.group("elapsed")),
+    }

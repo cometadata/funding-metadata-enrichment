@@ -8,8 +8,11 @@ import pyarrow.parquet as pq
 from scripts.orchestrate_extractions import (
     Manifest,
     ManifestRow,
-    write_manifest,
+    parse_done_line,
+    pick_next_batch,
     read_manifest,
+    update_ema,
+    write_manifest,
 )
 
 
@@ -51,3 +54,55 @@ def test_write_manifest_atomic(tmp_path):
     write_manifest([], path)
     assert not (tmp_path / "m.parquet.tmp").exists()
     assert path.exists()
+
+
+def test_pick_batch_packs_until_target():
+    rows = [
+        _row("a.parquet", est_seconds=50.0),
+        _row("b.parquet", est_seconds=100.0),
+        _row("c.parquet", est_seconds=150.0),
+        _row("d.parquet", est_seconds=999.0, status="done"),
+    ]
+    batch = pick_next_batch(rows, target_seconds=200.0, max_files=50)
+    assert [r.input_file for r in batch] == ["c.parquet"]
+
+
+def test_pick_batch_handles_huge_single_file():
+    rows = [_row("huge.parquet", est_seconds=5000.0)]
+    batch = pick_next_batch(rows, target_seconds=1800.0, max_files=50)
+    assert [r.input_file for r in batch] == ["huge.parquet"]
+
+
+def test_pick_batch_skips_non_pending():
+    rows = [
+        _row("a.parquet", est_seconds=5.0, status="done"),
+        _row("b.parquet", est_seconds=5.0, status="assigned"),
+        _row("c.parquet", est_seconds=5.0, status="pending"),
+    ]
+    batch = pick_next_batch(rows, target_seconds=100.0, max_files=50)
+    assert [r.input_file for r in batch] == ["c.parquet"]
+
+
+def test_pick_batch_caps_at_max_files():
+    rows = [_row(f"f{i}.parquet", est_seconds=0.001) for i in range(100)]
+    batch = pick_next_batch(rows, target_seconds=999999.0, max_files=10)
+    assert len(batch) == 10
+
+
+def test_update_ema():
+    assert update_ema(prev=None, sample=0.05, alpha=0.3) == 0.05
+    assert abs(update_ema(prev=0.05, sample=0.10, alpha=0.3) - 0.065) < 1e-9
+
+
+def test_parse_done_line():
+    line = "[done file=results-2026-04-24/shard-0.parquet rows=12345 elapsed_s=678.9]"
+    parsed = parse_done_line(line)
+    assert parsed == {
+        "file": "results-2026-04-24/shard-0.parquet",
+        "rows": 12345,
+        "elapsed_s": 678.9,
+    }
+
+
+def test_parse_done_line_returns_none_on_no_match():
+    assert parse_done_line("INFO some other log line") is None
