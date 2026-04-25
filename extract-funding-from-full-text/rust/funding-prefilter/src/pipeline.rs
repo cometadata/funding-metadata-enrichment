@@ -64,7 +64,7 @@ enum ShardOutcome {
 
 /// Walk `input` for `*.parquet` files, returning them sorted by path for
 /// deterministic dispatch order.
-fn enumerate_shards(input: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn enumerate_shards(input: &Path) -> Result<Vec<PathBuf>> {
     let mut shards: Vec<PathBuf> = WalkDir::new(input)
         .into_iter()
         .filter_map(|entry| entry.ok())
@@ -169,7 +169,7 @@ fn process_shard(
 
 /// Background reporter. Ticks every `interval_secs`, polling `done` once per
 /// second so shutdown is responsive even with a long interval.
-fn spawn_progress_thread(
+pub(crate) fn spawn_progress_thread(
     interval_secs: u64,
     done: Arc<AtomicBool>,
     start: Instant,
