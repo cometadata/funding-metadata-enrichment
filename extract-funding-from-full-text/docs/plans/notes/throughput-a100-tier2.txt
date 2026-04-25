@@ -1,0 +1,16 @@
+A100-large smoke job (Task 6) — job 69ec4d08d2c8bd8662bcd181
+
+Hardware: NVIDIA A100-SXM4-80GB
+Image: pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+Torch: 2.6.0+cu124
+Cold start: ~10 min (apt-get + pip + uv resolve + dep download + model load)
+Active work: 14.9s wall for one input parquet (4,713 bytes, 2 rows, both status != "ok")
+
+The smoke file had no valid rows so we cannot directly calibrate seconds-per-byte.
+Sticking with the seed default of 9e-7 s/byte for the orchestrator. EMA will adjust
+once real-content jobs complete in Task 17.
+
+Smoke output verified at adambuttrick/arxiv-funding-statement-extractions/predictions/arXiv_src_2505_003.parquet:
+0 rows, schema = [arxiv_id, shard_id, doc_id, input_file, row_idx,
+                  predicted_statements, predicted_details, text_length,
+                  latency_ms, error]
