@@ -20,6 +20,7 @@ def test_make_output_row_with_predictions():
             "input_file": "results-2026-04-24/shard-00000.parquet",
             "row_idx": 3,
             "text_length": 8421,
+            "shard_id": "shard-00000",
         },
         enqueue_ts=100.0,
         yield_ts=100.5,
@@ -27,6 +28,7 @@ def test_make_output_row_with_predictions():
     row = make_output_row(result)
     assert row["arxiv_id"] == "2401.00001"
     assert row["doc_id"] == "2401.00001"
+    assert row["shard_id"] == "shard-00000"
     assert row["input_file"] == "results-2026-04-24/shard-00000.parquet"
     assert row["row_idx"] == 3
     assert row["predicted_statements"] == ["Funded by NSF grant 12345."]
@@ -108,3 +110,29 @@ def test_push_parquet_writes_temp_then_uploads(tmp_path, monkeypatch):
     assert captured["path_in_repo"] == "predictions/f.parquet"
     assert "predicted_statements" in captured["cols"]
     assert "predicted_details" in captured["cols"]
+
+
+def test_push_parquet_to_hub_empty_rows(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+
+    captured = {}
+
+    class FakeApi:
+        def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id, repo_type, commit_message):
+            import pyarrow.parquet as pq
+            tbl = pq.read_table(path_or_fileobj)
+            captured["rows"] = tbl.num_rows
+            captured["cols"] = tbl.column_names
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+
+    mod.push_parquet_to_hub([], repo_id="org/repo",
+                            path_in_repo="predictions/empty.parquet",
+                            staging_dir=tmp_path)
+    assert captured["rows"] == 0
+    expected = {
+        "arxiv_id", "shard_id", "doc_id", "input_file", "row_idx",
+        "predicted_statements", "predicted_details", "text_length",
+        "latency_ms", "error",
+    }
+    assert expected.issubset(set(captured["cols"]))

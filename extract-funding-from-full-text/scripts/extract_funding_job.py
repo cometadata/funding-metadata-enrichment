@@ -32,6 +32,25 @@ from huggingface_hub import HfApi
 logger = logging.getLogger("extract_funding_job")
 
 
+OUTPUT_SCHEMA = pa.schema([
+    pa.field("arxiv_id", pa.string()),
+    pa.field("shard_id", pa.string()),
+    pa.field("doc_id", pa.string()),
+    pa.field("input_file", pa.string()),
+    pa.field("row_idx", pa.int64()),
+    pa.field("predicted_statements", pa.list_(pa.string())),
+    pa.field("predicted_details", pa.list_(pa.struct([
+        pa.field("statement", pa.string()),
+        pa.field("score", pa.float64()),
+        pa.field("query", pa.string()),
+        pa.field("paragraph_idx", pa.int64()),
+    ]))),
+    pa.field("text_length", pa.int64()),
+    pa.field("latency_ms", pa.float64()),
+    pa.field("error", pa.string()),
+])
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Run Tier-2 funding-statement extraction over a list of input parquets and push results to hub.",
@@ -61,6 +80,7 @@ def make_output_row(result):
     meta = result.metadata or {}
     return {
         "arxiv_id": meta.get("arxiv_id"),
+        "shard_id": meta.get("shard_id"),
         "doc_id": result.doc_id,
         "input_file": meta.get("input_file"),
         "row_idx": meta.get("row_idx"),
@@ -83,7 +103,7 @@ def make_output_row(result):
 def push_parquet_to_hub(rows, *, repo_id, path_in_repo, staging_dir):
     if rows is None:
         rows = []
-    table = pa.Table.from_pylist(rows)
+    table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
     staging_dir = Path(staging_dir)
     staging_dir.mkdir(parents=True, exist_ok=True)
     local_path = staging_dir / Path(path_in_repo).name
@@ -175,13 +195,18 @@ def main(argv=None) -> int:
             ds = load_dataset(args.input_repo, data_files=input_file,
                               split="train", streaming=True)
 
+            counters = {"processed": 0, "skipped_status": 0, "skipped_empty": 0}
+
             def docs_iter():
                 for row_idx, row in enumerate(ds):
                     if row.get("status") != "ok":
+                        counters["skipped_status"] += 1
                         continue
                     text = row.get(args.text_column)
                     if not text:
+                        counters["skipped_empty"] += 1
                         continue
+                    counters["processed"] += 1
                     yield DocPayload(
                         doc_id=str(row.get(args.id_column) or row_idx),
                         text=text,
@@ -216,6 +241,12 @@ def main(argv=None) -> int:
             # CRITICAL: this exact format is parsed by the orchestrator
             print(
                 f"[done file={input_file} rows={len(output_rows)} elapsed_s={elapsed:.1f}]",
+                flush=True,
+            )
+            print(
+                f"[file_summary file={input_file} processed={counters['processed']} "
+                f"skipped_status={counters['skipped_status']} "
+                f"skipped_empty={counters['skipped_empty']}]",
                 flush=True,
             )
         except Exception as exc:  # noqa: BLE001
