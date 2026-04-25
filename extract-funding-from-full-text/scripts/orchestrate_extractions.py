@@ -254,7 +254,7 @@ def poll_job_state(job_id):
     orchestrator can retry on its next poll.
     """
     api = HfApi()
-    info = api.inspect_job(job_id)
+    info = api.inspect_job(job_id=job_id)
     stage = getattr(info.status, "stage", None) or getattr(info, "status", "UNKNOWN")
     done = []
     last_ts: Optional[float] = None
@@ -264,9 +264,11 @@ def poll_job_state(job_id):
     bailed_early = False
     start = time.monotonic()
     try:
-        for entry in api.fetch_job_logs(job_id):
+        for entry in api.fetch_job_logs(job_id=job_id):
             n_lines += 1
-            line = getattr(entry, "data", "") or ""
+            # fetch_job_logs yields plain strings in this huggingface_hub version,
+            # but older/newer versions may yield objects with a .data attribute.
+            line = entry if isinstance(entry, str) else getattr(entry, "data", "") or ""
             parsed = parse_done_line(line)
             if parsed:
                 done.append(parsed)
@@ -550,7 +552,7 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
                                job_id, silent_min)
                 if not args.dry_run:
                     try:
-                        HfApi().cancel_job(job_id)
+                        HfApi().cancel_job(job_id=job_id)
                     except Exception as exc:
                         logger.warning("cancel failed: %s", exc)
                 state = JobState(stage="CANCELED",
