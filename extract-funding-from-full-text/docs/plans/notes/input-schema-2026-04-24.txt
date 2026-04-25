@@ -1,0 +1,33 @@
+Input dataset: cometadata/arxiv-latex-extract-full-text
+Subdir: results-2026-04-24/<year>/arXiv_src_<YYMM>_<NNN>.parquet
+n_parquet_files: 17,589
+Years: 1991 .. 2026 (35 year subdirs)
+
+Schema (all parquets):
+  arxiv_id: string not null    -- e.g. "hep-lat9107001", "2401.00001"
+  status: string not null      -- "ok" / failure codes (skip non-ok rows: text may be null)
+  error_message: string
+  num_tex_files: uint32
+  text_length: uint32
+  text: large_string           -- the full extracted body text
+  stage_timings_us: string     -- JSON blob of per-stage extraction timings
+  total_time_us: uint64
+  peak_memory_bytes: uint64
+  outer_tar: string            -- e.g. "arXiv_src_9107_001.tar"
+  file_type: string            -- "tex" / etc.
+  entry_name: string           -- path inside the source tar
+  shard_id: string not null    -- e.g. "arXiv_src_9107_001"
+
+Defaults for the worker / orchestrator:
+  --text-column text
+  --id-column   arxiv_id
+  Carry-through metadata (in addition to arxiv_id): shard_id
+
+Orchestrator notes:
+  - 17,589 files is too many for per-file footer reads in Task 9.
+    Use HfApi.list_repo_tree(..., recursive=True) which returns RepoFile
+    objects with .size in bytes; estimate est_seconds from bytes directly
+    (file size correlates well with encode time, no per-file network round-trip
+    needed).
+  - Skip rows where status != "ok" (text may be null/empty); the worker should
+    also defensively skip empty text.
