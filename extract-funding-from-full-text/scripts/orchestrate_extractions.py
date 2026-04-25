@@ -551,9 +551,23 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
                 in_flight[job_id]["last_log_ts"] = state.last_log_ts
 
             silent_min = (_time.time() - in_flight[job_id]["last_log_ts"]) / 60.0
-            if silent_min > args.stuck_min and state.stage == "RUNNING":
-                logger.warning("job %s silent for %.1fmin -- cancelling",
-                               job_id, silent_min)
+            stuck_running = silent_min > args.stuck_min and state.stage == "RUNNING"
+            # SCHEDULING: HF can leave a submitted job waiting for a GPU slot
+            # for hours during contention. The pool slot is wasted, so cancel
+            # and let the orchestrator resubmit.
+            sched_age_min = (
+                _time.time() - in_flight[job_id]["submitted_at"]
+            ) / 60.0
+            stuck_scheduling = (
+                state.stage == "SCHEDULING" and sched_age_min > args.stuck_min
+            )
+            if stuck_running or stuck_scheduling:
+                reason = "running silent" if stuck_running else "stuck in SCHEDULING"
+                logger.warning(
+                    "job %s %s for %.1fmin -- cancelling",
+                    job_id, reason,
+                    silent_min if stuck_running else sched_age_min,
+                )
                 if not args.dry_run:
                     try:
                         HfApi().cancel_job(job_id=job_id)
