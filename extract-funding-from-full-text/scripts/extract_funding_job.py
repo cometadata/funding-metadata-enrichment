@@ -20,6 +20,11 @@ Designed to run on an HF Job (a100-large flavor) via `hf jobs uv run` on the
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+from huggingface_hub import HfApi
 
 
 def parse_args(argv=None):
@@ -68,3 +73,20 @@ def make_output_row(result):
         "latency_ms": (result.yield_ts - result.enqueue_ts) * 1000.0,
         "error": result.error,
     }
+
+
+def push_parquet_to_hub(rows, *, repo_id, path_in_repo, staging_dir):
+    if rows is None:
+        rows = []
+    table = pa.Table.from_pylist(rows)
+    staging_dir = Path(staging_dir)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    local_path = staging_dir / Path(path_in_repo).name
+    pq.write_table(table, local_path, compression="zstd")
+    HfApi().upload_file(
+        path_or_fileobj=str(local_path),
+        path_in_repo=path_in_repo,
+        repo_id=repo_id,
+        repo_type="dataset",
+        commit_message=f"add {path_in_repo}",
+    )

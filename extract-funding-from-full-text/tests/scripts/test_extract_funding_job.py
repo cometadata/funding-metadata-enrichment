@@ -74,3 +74,37 @@ def test_parse_args_input_files_strips_whitespace():
         "--output-repo", "y", "--job-tag", "z",
     ])
     assert args.input_files == ["a.parquet", "b.parquet"]
+
+
+def test_push_parquet_writes_temp_then_uploads(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+
+    captured = {}
+
+    class FakeApi:
+        def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id, repo_type, commit_message):
+            import pyarrow.parquet as pq
+            tbl = pq.read_table(path_or_fileobj)
+            captured["rows"] = tbl.num_rows
+            captured["cols"] = tbl.column_names
+            captured["path_in_repo"] = path_in_repo
+            captured["repo_id"] = repo_id
+            captured["repo_type"] = repo_type
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+
+    rows = [
+        {"arxiv_id": "x", "doc_id": "x", "input_file": "f.parquet", "row_idx": 0,
+         "predicted_statements": ["A"], "predicted_details": [
+             {"statement": "A", "score": 1.0, "query": "q", "paragraph_idx": 0}
+         ],
+         "text_length": 10, "latency_ms": 1.0, "error": None},
+    ]
+    mod.push_parquet_to_hub(rows, repo_id="org/repo", path_in_repo="predictions/f.parquet",
+                            staging_dir=tmp_path)
+    assert captured["rows"] == 1
+    assert captured["repo_id"] == "org/repo"
+    assert captured["repo_type"] == "dataset"
+    assert captured["path_in_repo"] == "predictions/f.parquet"
+    assert "predicted_statements" in captured["cols"]
+    assert "predicted_details" in captured["cols"]
