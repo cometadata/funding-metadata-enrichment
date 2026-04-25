@@ -229,6 +229,122 @@ def test_submit_job_gives_up_after_max_retries(monkeypatch):
         )
 
 
+def test_submit_job_retries_503(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+    calls = {"n": 0, "sleeps": []}
+
+    class FakeJob:
+        id = "job-fake"
+
+    class FakeApi:
+        def run_job(self, **kw):
+            calls["n"] += 1
+            assert kw["flavor"] == "a100-large"
+            if calls["n"] < 3:
+                raise RuntimeError("HTTP 503 service unavailable")
+            return FakeJob()
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    monkeypatch.setattr(mod.time, "sleep", lambda s: calls["sleeps"].append(s))
+
+    job_id = mod.submit_a100_job(
+        script_path="scripts/extract_funding_job.py",
+        worker_argv=["--input-repo", "x", "--input-files", "f.parquet",
+                     "--output-repo", "y", "--job-tag", "z"],
+        token="t", timeout="2h",
+    )
+    assert job_id == "job-fake"
+    assert calls["n"] == 3
+    assert calls["sleeps"] == [60, 60]
+
+
+def test_poll_job_state_bounds_log_lines(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+
+    def gen_lines():
+        for i in range(200_000):
+            yield SimpleNamespace(data=f"INFO line {i}")
+
+    class FakeApi:
+        def inspect_job(self, job_id):
+            return SimpleNamespace(
+                status=SimpleNamespace(stage="RUNNING"), id=job_id,
+            )
+
+        def fetch_job_logs(self, job_id):
+            return gen_lines()
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    state = mod.poll_job_state("job-x")
+    assert state.stage == "RUNNING"
+    # No done events present, but the call should return promptly under cap.
+    assert state.done_files == []
+
+
+def test_poll_job_state_bounds_on_wall_clock(monkeypatch):
+    from scripts import orchestrate_extractions as mod
+
+    # Simulate monotonic jumping past the 15s cap on the second tick.
+    ticks = iter([0.0, 0.0, 100.0, 100.0, 100.0])
+
+    def fake_monotonic():
+        try:
+            return next(ticks)
+        except StopIteration:
+            return 100.0
+
+    monkeypatch.setattr(mod.time, "monotonic", fake_monotonic)
+
+    def gen_lines():
+        for i in range(10):
+            yield SimpleNamespace(data=f"INFO line {i}")
+
+    class FakeApi:
+        def inspect_job(self, job_id):
+            return SimpleNamespace(
+                status=SimpleNamespace(stage="RUNNING"), id=job_id,
+            )
+
+        def fetch_job_logs(self, job_id):
+            return gen_lines()
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    state = mod.poll_job_state("job-x")
+    assert state.stage == "RUNNING"
+
+
+def test_dry_run_exercises_state_machine(tmp_path, monkeypatch):
+    from scripts import orchestrate_extractions as mod
+
+    # Avoid real HF calls for the listing / outputs side.
+    listing = [("dir/a.parquet", 100_000), ("dir/b.parquet", 200_000)]
+    monkeypatch.setattr(mod, "list_input_files_with_sizes",
+                        lambda repo, sub: listing)
+    monkeypatch.setattr(mod, "list_existing_outputs", lambda repo: set())
+
+    manifest_path = tmp_path / "m.parquet"
+    rc = mod.main([
+        "--manifest", str(manifest_path),
+        "--max-in-flight", "2",
+        "--max-files-per-batch", "5",
+        "--target-seconds", "999999",
+        "--seed-seconds-per-byte", "1e-6",
+        "--dry-run",
+    ])
+    assert rc == 0
+    rows = mod.read_manifest(manifest_path)
+    by = {r.input_file: r for r in rows}
+    for f, sz in listing:
+        r = by[f]
+        assert r.status == "done"
+        assert r.job_id and r.job_id.startswith("dry-")
+        assert r.output_path == f"predictions/{f.split('/')[-1]}"
+        # synthetic worker_elapsed_s = size_bytes * seed_seconds_per_byte
+        assert r.worker_elapsed_s == sz * 1e-6
+        assert r.row_count == max(1, sz // 4096)
+        assert r.completed_at is not None
+
+
 def test_poll_job_state_parses_logs_and_status(monkeypatch):
     from scripts import orchestrate_extractions as mod
 

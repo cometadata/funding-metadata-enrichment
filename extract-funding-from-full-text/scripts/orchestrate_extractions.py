@@ -213,6 +213,8 @@ def submit_a100_job(*, script_path, worker_argv, token, timeout="2h", max_retrie
            f"uv run /tmp/p.py {argv_str}"]
     api = HfApi()
     last_exc: Optional[Exception] = None
+    retry_markers = ("429", "500", "502", "503", "504",
+                     "timeout", "connection", "Connection")
     for attempt in range(max_retries):
         try:
             job = api.run_job(
@@ -223,7 +225,8 @@ def submit_a100_job(*, script_path, worker_argv, token, timeout="2h", max_retrie
             return job.id
         except Exception as exc:
             last_exc = exc
-            if "429" in str(exc):
+            msg = str(exc)
+            if any(m in msg for m in retry_markers):
                 time.sleep(60)
                 continue
             raise
@@ -250,15 +253,32 @@ def poll_job_state(job_id):
     stage = getattr(info.status, "stage", None) or getattr(info, "status", "UNKNOWN")
     done = []
     last_ts: Optional[float] = None
+    max_lines = 50_000
+    max_seconds = 15.0
+    n_lines = 0
+    bailed_early = False
+    start = time.monotonic()
     try:
         for entry in api.fetch_job_logs(job_id):
+            n_lines += 1
             line = getattr(entry, "data", "") or ""
             parsed = parse_done_line(line)
             if parsed:
                 done.append(parsed)
             last_ts = time.time()
+            if n_lines >= max_lines:
+                bailed_early = True
+                break
+            if time.monotonic() - start >= max_seconds:
+                bailed_early = True
+                break
     except Exception:
         pass
+    if bailed_early:
+        logger.info(
+            "[poll] bailed early on job=%s after %d lines / %.1fs",
+            job_id, n_lines, time.monotonic() - start,
+        )
     return JobState(stage=str(stage), done_files=done, last_log_ts=last_ts)
 
 
@@ -295,7 +315,7 @@ def parse_orch_args(argv=None):
     return p.parse_args(argv)
 
 
-def main(argv=None) -> int:
+def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
     args = parse_orch_args(argv)
     logging.basicConfig(
         level=logging.INFO,
@@ -331,17 +351,70 @@ def main(argv=None) -> int:
             os.path.expanduser("~/.cache/huggingface/token")
         ).read().strip()
 
+    # In dry-run mode synthesize submit/poll so the assigned->done state
+    # machine + EMA update + release path actually run.
+    if args.dry_run and submit_fn is None and poll_fn is None:
+        seed_spb = args.seed_seconds_per_byte
+        _dry_jobs: dict = {}
+
+        def _arg_value(argv, name):
+            for i, tok in enumerate(argv):
+                if tok == name and i + 1 < len(argv):
+                    return argv[i + 1]
+            return None
+
+        def _dry_submit(*, script_path, worker_argv, token, timeout,
+                        max_retries=10):
+            files = (_arg_value(worker_argv, "--input-files") or "").split(",")
+            files = [f for f in files if f]
+            job_tag = _arg_value(worker_argv, "--job-tag") or "x"
+            jid = f"dry-{job_tag}"
+            _dry_jobs[jid] = files
+            return jid
+
+        # We need access to the manifest to look up size_bytes; stash a
+        # closure-captured callable that the loop wires up.
+        _manifest_lookup: dict = {"by_file": lambda: {}}
+
+        def _dry_poll(job_id):
+            files = _dry_jobs.get(job_id, [])
+            mb = _manifest_lookup["by_file"]()
+            done = []
+            for f in files:
+                row = mb.get(f)
+                size = row.size_bytes if row else 4096
+                done.append({
+                    "file": f,
+                    "rows": max(1, size // 4096),
+                    "elapsed_s": size * seed_spb,
+                })
+            return JobState(stage="COMPLETED", done_files=done,
+                            last_log_ts=_time.time())
+
+        submit_fn = _dry_submit
+        poll_fn = _dry_poll
+    else:
+        _manifest_lookup = None
+
+    if submit_fn is None:
+        submit_fn = submit_a100_job
+    if poll_fn is None:
+        poll_fn = poll_job_state
+
     in_flight: dict = {}
     seconds_per_byte_ema: Optional[float] = None
 
     def manifest_by_file():
         return {r.input_file: r for r in manifest}
 
+    if _manifest_lookup is not None:
+        _manifest_lookup["by_file"] = manifest_by_file
+
     while True:
         # --- Poll in-flight jobs ---
         for job_id in list(in_flight):
             try:
-                state = poll_job_state(job_id)
+                state = poll_fn(job_id)
             except Exception as exc:
                 logger.warning("poll failed for %s: %s", job_id, exc)
                 continue
@@ -424,21 +497,12 @@ def main(argv=None) -> int:
             ]
             if args.dry_run:
                 logger.info(
-                    "[dry-run] would submit batch (%d files, est %.1fs)",
+                    "[dry-run] submitting synthetic batch (%d files, est %.1fs)",
                     len(batch), sum(r.est_seconds for r in batch),
                 )
-                fake_id = f"dry-{job_tag}"
-                now = _time.time()
-                for r in batch:
-                    r.status = "done"
-                    r.job_id = fake_id
-                    r.assigned_at = now
-                    r.completed_at = now
-                    r.output_path = f"predictions/{Path(r.input_file).name}"
-                continue
 
             try:
-                job_id = submit_a100_job(
+                job_id = submit_fn(
                     script_path=args.worker_script,
                     worker_argv=worker_argv,
                     token=token,
