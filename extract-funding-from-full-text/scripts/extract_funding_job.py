@@ -260,6 +260,8 @@ def main(argv=None) -> int:
     staging = Path("/tmp/extract_funding_outputs")
     staged_buffer: list[dict] = []
     batch_index = 0
+    consecutive_commit_failures = 0
+    MAX_CONSECUTIVE_COMMIT_FAILURES = 2
 
     for input_file in args.input_files:
         t0 = time.perf_counter()
@@ -331,13 +333,32 @@ def main(argv=None) -> int:
             if len(staged_buffer) >= args.commit_batch_size:
                 batch_index += 1
                 logger.info("committing batch %d (%d files)", batch_index, len(staged_buffer))
-                commit_staged_batch(
-                    staged_buffer, repo_id=args.output_repo, batch_index=batch_index,
-                )
-                # Only emit [done ...] AFTER successful commit — orchestrator
-                # treats these as proof the file is on hub.
-                emit_done_lines(staged_buffer)
-                staged_buffer = []
+                try:
+                    commit_staged_batch(
+                        staged_buffer, repo_id=args.output_repo, batch_index=batch_index,
+                    )
+                except Exception as commit_exc:  # noqa: BLE001
+                    consecutive_commit_failures += 1
+                    logger.exception(
+                        "batch commit %d failed (consecutive=%d/%d): %s",
+                        batch_index, consecutive_commit_failures,
+                        MAX_CONSECUTIVE_COMMIT_FAILURES, commit_exc,
+                    )
+                    if consecutive_commit_failures >= MAX_CONSECUTIVE_COMMIT_FAILURES:
+                        logger.error(
+                            "aborting worker after %d consecutive commit failures "
+                            "(%d files in buffer never persisted) — orchestrator "
+                            "will resubmit unfinished files",
+                            consecutive_commit_failures, len(staged_buffer),
+                        )
+                        return 4
+                    # Keep buffer; next batch boundary retries with more files.
+                else:
+                    # Only emit [done ...] AFTER successful commit — orchestrator
+                    # treats these as proof the file is on hub.
+                    emit_done_lines(staged_buffer)
+                    staged_buffer = []
+                    consecutive_commit_failures = 0
         except Exception as exc:  # noqa: BLE001
             logger.exception("[fail file=%s] %s", input_file, exc)
             # Continue to next file rather than failing the whole job —
