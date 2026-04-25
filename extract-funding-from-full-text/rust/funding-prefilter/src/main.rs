@@ -1,10 +1,15 @@
 //! `funding-prefilter` CLI.
 //!
-//! Two subcommands:
+//! Three subcommands:
 //! * `run` (default) — walk an input directory of parquet shards, apply the
 //!   two-stage regex gate, and write per-shard candidate parquets.
 //! * `merge` — concatenate per-shard candidate parquets into a single parquet
 //!   plus a sorted, deduplicated `arxiv_id` text file for downstream jobs.
+//! * `materialize` — given the original input shards plus the per-shard
+//!   candidate parquets from `run`, emit new parquets that contain only the
+//!   candidate rows but preserve the full input schema. Intended for
+//!   downstream extractors that need the original `text` column without
+//!   re-scanning the whole corpus.
 //!
 //! The default `--patterns` path is baked in at build time via
 //! `CARGO_MANIFEST_DIR` so the installed binary always resolves back to the
@@ -28,6 +33,9 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use walkdir::WalkDir;
 
+use funding_prefilter::materialize::{
+    run as run_materialize, MaterializeConfig,
+};
 use funding_prefilter::pipeline::{run as run_pipeline, PipelineConfig, PipelineStats};
 
 #[derive(Parser)]
@@ -72,6 +80,14 @@ enum Command {
     Run(RunArgs),
     /// Merge per-shard candidate parquets into a single parquet + text file.
     Merge(MergeArgs),
+    /// Materialize full-row parquets for just the candidate documents.
+    ///
+    /// Reads the original input shards and the per-shard candidate parquets
+    /// produced by `run`, and writes new parquets that contain only the
+    /// candidate rows but preserve every input column (text, status,
+    /// num_tex_files, ...). Mirrors the input directory tree under `--output`.
+    /// Same exit-code conventions as `run`.
+    Materialize(MaterializeArgs),
 }
 
 #[derive(clap::Args, Default, Clone)]
@@ -116,6 +132,33 @@ struct MergeArgs {
     ids: PathBuf,
 }
 
+#[derive(clap::Args)]
+struct MaterializeArgs {
+    /// Original input directory (recursively scanned for *.parquet).
+    #[arg(short, long)]
+    input: PathBuf,
+
+    /// Per-shard candidate parquets directory (the `--output` of `run`).
+    #[arg(short, long)]
+    candidates: PathBuf,
+
+    /// Output directory (filtered shard outputs mirror the input tree).
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Worker thread count. Defaults to num_cpus::get().
+    #[arg(short, long)]
+    threads: Option<usize>,
+
+    /// Reprocess shards even if output already exists.
+    #[arg(long)]
+    force: bool,
+
+    /// Progress reporting interval in seconds.
+    #[arg(long, default_value_t = 5)]
+    progress_interval: u64,
+}
+
 /// Default patterns YAML location, resolved at build time so the installed
 /// binary always finds the repo's shared config regardless of the caller's
 /// CWD. Override with `--patterns` when running against a different YAML.
@@ -135,6 +178,7 @@ fn main() -> ExitCode {
     let result = match cmd {
         Command::Run(args) => run_cmd(args),
         Command::Merge(args) => merge_cmd(args),
+        Command::Materialize(args) => materialize_cmd(args),
     };
 
     match result {
@@ -195,6 +239,44 @@ fn run_cmd(args: RunArgs) -> Result<ExitCode> {
     let code = classify_exit_code(&stats);
     // Surface a partial-failure warning so a CI green-light doesn't slip past
     // an operator skimming logs.
+    if stats.shards_errored > 0 && stats.shards_errored < stats.shards_total {
+        eprintln!(
+            "warning: {}/{} shards errored — see [error] lines above; exiting with code 4",
+            stats.shards_errored, stats.shards_total
+        );
+    }
+    Ok(code)
+}
+
+/// Handle `funding-prefilter materialize`. Same exit-code conventions as
+/// `run` — `classify_exit_code` is shared across both, so a downstream CI job
+/// can use the same logic for either subcommand.
+fn materialize_cmd(args: MaterializeArgs) -> Result<ExitCode> {
+    let threads = args.threads.unwrap_or_else(num_cpus::get);
+
+    let cfg = MaterializeConfig {
+        input: args.input,
+        candidates: args.candidates,
+        output: args.output,
+        threads,
+        force: args.force,
+        progress_interval_secs: args.progress_interval,
+    };
+
+    let stats = run_materialize(&cfg).context("materialize run failed")?;
+
+    println!(
+        "done: shards_total={} done={} skipped={} errored={} rows={} candidates={} elapsed={:.2}s",
+        stats.shards_total,
+        stats.shards_done,
+        stats.shards_skipped,
+        stats.shards_errored,
+        stats.rows_read,
+        stats.candidates_kept,
+        stats.elapsed_secs,
+    );
+
+    let code = classify_exit_code(&stats);
     if stats.shards_errored > 0 && stats.shards_errored < stats.shards_total {
         eprintln!(
             "warning: {}/{} shards errored — see [error] lines above; exiting with code 4",

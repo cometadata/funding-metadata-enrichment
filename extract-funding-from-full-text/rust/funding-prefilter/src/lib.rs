@@ -1,6 +1,7 @@
 pub mod patterns;
 pub mod parquet_io;
 pub mod pipeline;
+pub mod materialize;
 
 use once_cell::sync::Lazy;
 
