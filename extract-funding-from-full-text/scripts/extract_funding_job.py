@@ -20,11 +20,16 @@ Designed to run on an HF Job (a100-large flavor) via `hf jobs uv run` on the
 from __future__ import annotations
 
 import argparse
+import logging
+import sys
+import time
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi
+
+logger = logging.getLogger("extract_funding_job")
 
 
 def parse_args(argv=None):
@@ -90,3 +95,136 @@ def push_parquet_to_hub(rows, *, repo_id, path_in_repo, staging_dir):
         repo_type="dataset",
         commit_message=f"add {path_in_repo}",
     )
+
+
+def _apply_dtype_patch(dtype_str: str) -> None:
+    if dtype_str == "auto" or dtype_str == "fp32":
+        return
+    import torch
+    from pylate import models as pl_models
+
+    target = {"fp16": torch.float16, "bf16": torch.bfloat16}[dtype_str]
+    orig_init = pl_models.ColBERT.__init__
+
+    def patched_init(self, *a, **kw):
+        orig_init(self, *a, **kw)
+        self.to(target)
+        logger.info("ColBERT weights cast to %s", target)
+
+    pl_models.ColBERT.__init__ = patched_init
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+                        stream=sys.stdout)
+    logger.info("job_tag=%s input_files=%d", args.job_tag, len(args.input_files))
+
+    import torch
+
+    if args.allow_cpu:
+        logger.info(
+            "torch=%s cuda=%s device=%s (allow-cpu=True; skipping CUDA-required probe)",
+            torch.__version__,
+            torch.cuda.is_available(),
+            "cpu" if not torch.cuda.is_available() else torch.cuda.get_device_name(0),
+        )
+    else:
+        cuda_ok = False
+        for attempt in range(120):
+            try:
+                if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                    cuda_ok = True
+                    break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cuda probe attempt %d failed: %s", attempt, exc)
+            time.sleep(1)
+        if not cuda_ok:
+            logger.error(
+                "CUDA not available after 120s wait — refusing to fall back to CPU "
+                "(would take ~14h on a100-large host CPU). Aborting."
+            )
+            return 2
+
+        logger.info(
+            "torch=%s cuda=%s device=%s",
+            torch.__version__,
+            torch.cuda.is_available(),
+            torch.cuda.get_device_name(0),
+        )
+
+    _apply_dtype_patch(args.dtype)
+
+    from datasets import load_dataset
+    from funding_statement_extractor.config.loader import load_queries
+    from funding_statement_extractor.statements.batch_extraction import (
+        DocPayload,
+        extract_funding_statements_batch,
+    )
+
+    queries = load_queries()
+    logger.info("loaded %d queries", len(queries))
+
+    staging = Path("/tmp/extract_funding_outputs")
+
+    for input_file in args.input_files:
+        t0 = time.perf_counter()
+        logger.info("[start file=%s]", input_file)
+        try:
+            ds = load_dataset(args.input_repo, data_files=input_file,
+                              split="train", streaming=True)
+
+            def docs_iter():
+                for row_idx, row in enumerate(ds):
+                    if row.get("status") != "ok":
+                        continue
+                    text = row.get(args.text_column)
+                    if not text:
+                        continue
+                    yield DocPayload(
+                        doc_id=str(row.get(args.id_column) or row_idx),
+                        text=text,
+                        metadata={
+                            "row_idx": row_idx,
+                            "input_file": input_file,
+                            "arxiv_id": row.get("arxiv_id"),
+                            "shard_id": row.get("shard_id"),
+                            "text_length": len(text),
+                        },
+                    )
+
+            output_rows = []
+            for result in extract_funding_statements_batch(
+                documents=docs_iter(),
+                queries=queries,
+                model_name=args.colbert_model,
+                top_k=5,
+                threshold=10.0,
+                enable_paragraph_prefilter=True,
+                regex_match_score_floor=11.0,
+                paragraphs_per_batch=4096,
+                encode_batch_size=args.batch_size,
+                dtype=args.dtype,
+            ):
+                output_rows.append(make_output_row(result))
+
+            out_path = f"predictions/{Path(input_file).name}"
+            push_parquet_to_hub(output_rows, repo_id=args.output_repo,
+                                path_in_repo=out_path, staging_dir=staging)
+            elapsed = time.perf_counter() - t0
+            # CRITICAL: this exact format is parsed by the orchestrator
+            print(
+                f"[done file={input_file} rows={len(output_rows)} elapsed_s={elapsed:.1f}]",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[fail file=%s] %s", input_file, exc)
+            # Continue to next file rather than failing the whole job —
+            # the orchestrator will retry the unfinished file.
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
