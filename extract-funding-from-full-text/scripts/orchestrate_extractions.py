@@ -260,3 +260,233 @@ def poll_job_state(job_id):
     except Exception:
         pass
     return JobState(stage=str(stage), done_files=done, last_log_ts=last_ts)
+
+
+import argparse
+import logging
+import sys
+import time as _time
+
+logger = logging.getLogger("orchestrate_extractions")
+
+
+def parse_orch_args(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--input-repo", default="cometadata/arxiv-latex-extract-full-text")
+    p.add_argument("--input-subdir", default="results-2026-04-24")
+    p.add_argument("--output-repo",
+                   default="cometadata/arxiv-funding-statement-extractions")
+    p.add_argument("--manifest",
+                   default="manifests/arxiv-extractions-2026-04-24.parquet")
+    p.add_argument("--max-in-flight", type=int, default=8)
+    p.add_argument("--target-seconds", type=int, default=5400,
+                   help="Target wall-clock per job batch (default 90 min).")
+    p.add_argument("--max-files-per-batch", type=int, default=50)
+    p.add_argument("--max-attempts", type=int, default=2)
+    p.add_argument("--stuck-min", type=int, default=15,
+                   help="Minutes of log silence before cancelling a RUNNING job.")
+    p.add_argument("--poll-interval-s", type=int, default=60)
+    p.add_argument("--seed-seconds-per-byte", type=float, default=9e-7,
+                   help="Initial estimate; overridden by EMA after first jobs complete.")
+    p.add_argument("--worker-script", default="scripts/extract_funding_job.py")
+    p.add_argument("--job-timeout", default="2h")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Don't actually submit; mark batches done immediately.")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_orch_args(argv)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
+
+    manifest_path = Path(args.manifest)
+    if manifest_path.exists():
+        manifest = read_manifest(manifest_path)
+        logger.info("loaded manifest with %d rows", len(manifest))
+    else:
+        manifest = []
+
+    logger.info("listing inputs from %s/%s", args.input_repo, args.input_subdir)
+    listing = list_input_files_with_sizes(args.input_repo, args.input_subdir)
+    logger.info("found %d input files (%d total bytes)",
+                len(listing), sum(s for _, s in listing))
+    manifest = seed_or_merge_manifest(
+        manifest, listing, seconds_per_byte=args.seed_seconds_per_byte
+    )
+
+    logger.info("listing existing outputs in %s", args.output_repo)
+    existing = list_existing_outputs(args.output_repo)
+    logger.info("found %d existing output files", len(existing))
+    manifest = reconcile_against_outputs(manifest, existing)
+    write_manifest(manifest, manifest_path)
+
+    if args.dry_run:
+        token = "dry-run"
+    else:
+        token = os.environ.get("HF_TOKEN") or open(
+            os.path.expanduser("~/.cache/huggingface/token")
+        ).read().strip()
+
+    in_flight: dict = {}
+    seconds_per_byte_ema: Optional[float] = None
+
+    def manifest_by_file():
+        return {r.input_file: r for r in manifest}
+
+    while True:
+        # --- Poll in-flight jobs ---
+        for job_id in list(in_flight):
+            try:
+                state = poll_job_state(job_id)
+            except Exception as exc:
+                logger.warning("poll failed for %s: %s", job_id, exc)
+                continue
+            mb = manifest_by_file()
+            for ev in state.done_files:
+                row = mb.get(ev["file"])
+                if row and row.status == "assigned" and row.job_id == job_id:
+                    row.status = "done"
+                    row.completed_at = _time.time()
+                    row.output_path = f"predictions/{Path(ev['file']).name}"
+                    row.worker_elapsed_s = ev["elapsed_s"]
+                    row.row_count = ev["rows"]
+                    if row.size_bytes > 0:
+                        sample = ev["elapsed_s"] / row.size_bytes
+                        seconds_per_byte_ema = update_ema(
+                            seconds_per_byte_ema, sample, 0.3
+                        )
+                    logger.info(
+                        "[done] file=%s rows=%d elapsed=%.1fs ema=%s s/byte",
+                        ev["file"], ev["rows"], ev["elapsed_s"],
+                        f"{seconds_per_byte_ema:.3e}" if seconds_per_byte_ema else "n/a",
+                    )
+            if state.last_log_ts:
+                in_flight[job_id]["last_log_ts"] = state.last_log_ts
+
+            silent_min = (_time.time() - in_flight[job_id]["last_log_ts"]) / 60.0
+            if silent_min > args.stuck_min and state.stage == "RUNNING":
+                logger.warning("job %s silent for %.1fmin -- cancelling",
+                               job_id, silent_min)
+                if not args.dry_run:
+                    try:
+                        HfApi().cancel_job(job_id)
+                    except Exception as exc:
+                        logger.warning("cancel failed: %s", exc)
+                state = JobState(stage="CANCELED",
+                                 done_files=state.done_files,
+                                 last_log_ts=state.last_log_ts)
+
+            if state.stage in ("COMPLETED", "ERROR", "CANCELED"):
+                for f in in_flight[job_id]["files"]:
+                    row = mb.get(f)
+                    if row and row.status == "assigned" and row.job_id == job_id:
+                        row.attempts += 1
+                        if row.attempts >= args.max_attempts:
+                            row.status = "failed"
+                            row.last_error = f"job {job_id} stage={state.stage}"
+                            logger.error("[failed] file=%s after %d attempts",
+                                         f, row.attempts)
+                        else:
+                            row.status = "pending"
+                            row.job_id = None
+                            row.assigned_at = None
+                            row.last_error = f"job {job_id} stage={state.stage}"
+                            logger.warning("[released] file=%s attempts=%d",
+                                           f, row.attempts)
+                del in_flight[job_id]
+
+        # Recompute pending estimates with EMA
+        if seconds_per_byte_ema:
+            for r in manifest:
+                if r.status == "pending":
+                    r.est_seconds = r.size_bytes * seconds_per_byte_ema
+
+        # --- Refill ---
+        while len(in_flight) < args.max_in_flight:
+            batch = pick_next_batch(
+                manifest,
+                target_seconds=args.target_seconds,
+                max_files=args.max_files_per_batch,
+            )
+            if not batch:
+                break
+            job_tag = f"orch-{int(_time.time())}-{len(in_flight)}"
+            input_files_arg = ",".join(r.input_file for r in batch)
+            worker_argv = [
+                "--input-repo", args.input_repo,
+                "--input-files", input_files_arg,
+                "--output-repo", args.output_repo,
+                "--job-tag", job_tag,
+            ]
+            if args.dry_run:
+                logger.info(
+                    "[dry-run] would submit batch (%d files, est %.1fs)",
+                    len(batch), sum(r.est_seconds for r in batch),
+                )
+                fake_id = f"dry-{job_tag}"
+                now = _time.time()
+                for r in batch:
+                    r.status = "done"
+                    r.job_id = fake_id
+                    r.assigned_at = now
+                    r.completed_at = now
+                    r.output_path = f"predictions/{Path(r.input_file).name}"
+                continue
+
+            try:
+                job_id = submit_a100_job(
+                    script_path=args.worker_script,
+                    worker_argv=worker_argv,
+                    token=token,
+                    timeout=args.job_timeout,
+                )
+            except Exception as exc:
+                logger.error(
+                    "submit failed: %s -- leaving %d files pending",
+                    exc, len(batch),
+                )
+                break
+            now = _time.time()
+            for r in batch:
+                r.status = "assigned"
+                r.job_id = job_id
+                r.assigned_at = now
+            in_flight[job_id] = {
+                "files": [r.input_file for r in batch],
+                "submitted_at": now,
+                "last_log_ts": now,
+            }
+            logger.info(
+                "[submitted] job=%s files=%d est_total=%.0fs",
+                job_id, len(batch), sum(r.est_seconds for r in batch),
+            )
+
+        write_manifest(manifest, manifest_path)
+
+        n_pending = sum(1 for r in manifest if r.status == "pending")
+        n_assigned = sum(1 for r in manifest if r.status == "assigned")
+        n_done = sum(1 for r in manifest if r.status == "done")
+        n_failed = sum(1 for r in manifest if r.status == "failed")
+        logger.info(
+            "status: pending=%d assigned=%d done=%d failed=%d in_flight=%d",
+            n_pending, n_assigned, n_done, n_failed, len(in_flight),
+        )
+        if n_pending == 0 and n_assigned == 0 and not in_flight:
+            logger.info("all done")
+            break
+
+        if args.dry_run:
+            # In dry-run we never actually have in_flight jobs to wait on; loop will
+            # exit on the next iteration once everything is marked done.
+            continue
+        time.sleep(args.poll_interval_s)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
