@@ -258,8 +258,12 @@ def poll_job_state(job_id):
     stage = getattr(info.status, "stage", None) or getattr(info, "status", "UNKNOWN")
     done = []
     last_ts: Optional[float] = None
-    max_lines = 50_000
-    max_seconds = 15.0
+    # fetch_job_logs re-streams the entire job log on every poll (no cursor),
+    # so caps must accommodate cumulative log volume across the whole run, not
+    # just per-poll deltas. Workers emit ~30-50 lines per processed file plus
+    # cold-start chatter, so a 2h job can easily hit 100k lines.
+    max_lines = 500_000
+    max_seconds = 90.0
     n_lines = 0
     bailed_early = False
     start = time.monotonic()
