@@ -561,10 +561,15 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
             stuck_scheduling = (
                 state.stage == "SCHEDULING" and sched_age_min > args.stuck_min
             )
+            # Track whether WE cancelled this job for infra reasons (vs the
+            # job ending naturally due to ERROR/COMPLETED). Infra cancellations
+            # should NOT consume the row's retry budget — those files never got
+            # a real attempt at the work.
+            self_cancelled_infra = False
             if stuck_running or stuck_scheduling:
                 reason = "running silent" if stuck_running else "stuck in SCHEDULING"
                 logger.warning(
-                    "job %s %s for %.1fmin -- cancelling",
+                    "job %s %s for %.1fmin -- cancelling (no attempt charged)",
                     job_id, reason,
                     silent_min if stuck_running else sched_age_min,
                 )
@@ -576,11 +581,27 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
                 state = JobState(stage="CANCELED",
                                  done_files=state.done_files,
                                  last_log_ts=state.last_log_ts)
+                self_cancelled_infra = True
 
             if state.stage in ("COMPLETED", "ERROR", "CANCELED"):
                 for f in in_flight[job_id]["files"]:
                     row = mb.get(f)
                     if row and row.status == "assigned" and row.job_id == job_id:
+                        if self_cancelled_infra:
+                            # Infra cancel: just release back to pending,
+                            # don't bump attempts — file never had a real chance.
+                            row.status = "pending"
+                            row.job_id = None
+                            row.assigned_at = None
+                            row.last_error = (
+                                f"job {job_id} cancelled (infra: "
+                                f"{'sched-stuck' if stuck_scheduling else 'silent-stuck'})"
+                            )
+                            logger.info(
+                                "[released-infra] file=%s attempts=%d (unchanged)",
+                                f, row.attempts,
+                            )
+                            continue
                         row.attempts += 1
                         if row.attempts >= args.max_attempts:
                             row.status = "failed"
