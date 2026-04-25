@@ -386,7 +386,11 @@ def main(argv=None) -> int:
             ):
                 output_rows.append(make_output_row(result))
 
-            out_path = f"predictions/{Path(input_file).name}"
+            # Shard by year subdirectory; HF datasets cap at 10k files per
+            # directory so a flat predictions/ would crash at file 10001.
+            # input_file is "results-2026-04-24/<year>/arXiv_src_<YYMM>_<NNN>.parquet".
+            year = Path(input_file).parent.name
+            out_path = f"predictions/{year}/{Path(input_file).name}"
             local_path = stage_parquet_locally(
                 output_rows, path_in_repo=out_path, staging_dir=staging,
             )

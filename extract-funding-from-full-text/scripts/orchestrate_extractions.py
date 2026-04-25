@@ -161,15 +161,25 @@ def seed_or_merge_manifest(existing, listing, *, seconds_per_byte):
 
 
 def reconcile_against_outputs(rows, existing_outputs):
+    """Mark rows done if their output parquet exists on hub.
+
+    Matches by basename so both layouts work:
+      - legacy flat:  predictions/<basename>
+      - year-sharded: predictions/<year>/<basename>
+    """
     import time as _time
+    by_basename = {}
+    for p in existing_outputs:
+        by_basename[Path(p).name] = p
     out = []
     for r in rows:
-        candidate = f"predictions/{Path(r.input_file).name}"
-        if candidate in existing_outputs and r.status != "done":
+        basename = Path(r.input_file).name
+        existing_path = by_basename.get(basename)
+        if existing_path and r.status != "done":
             r = ManifestRow(**{
                 **asdict(r),
                 "status": "done",
-                "output_path": candidate,
+                "output_path": existing_path,
                 "completed_at": _time.time(),
             })
         out.append(r)
@@ -534,7 +544,9 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
                 if row and row.status == "assigned" and row.job_id == job_id:
                     row.status = "done"
                     row.completed_at = _time.time()
-                    row.output_path = f"predictions/{Path(ev['file']).name}"
+                    # Match worker's year-sharded layout for new outputs.
+                    year = Path(ev["file"]).parent.name
+                    row.output_path = f"predictions/{year}/{Path(ev['file']).name}"
                     row.worker_elapsed_s = ev["elapsed_s"]
                     row.row_count = ev["rows"]
                     if row.size_bytes > 0:

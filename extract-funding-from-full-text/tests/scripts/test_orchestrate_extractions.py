@@ -338,7 +338,9 @@ def test_dry_run_exercises_state_machine(tmp_path, monkeypatch):
         r = by[f]
         assert r.status == "done"
         assert r.job_id and r.job_id.startswith("dry-")
-        assert r.output_path == f"predictions/{f.split('/')[-1]}"
+        # Year-sharded layout: predictions/<parent_dir>/<basename>
+        parts = f.split("/")
+        assert r.output_path == f"predictions/{parts[-2]}/{parts[-1]}"
         # synthetic worker_elapsed_s = size_bytes * seed_seconds_per_byte
         assert r.worker_elapsed_s == sz * 1e-6
         assert r.row_count == max(1, sz // 4096)
