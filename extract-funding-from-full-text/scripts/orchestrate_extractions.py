@@ -486,6 +486,26 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
         poll_fn = poll_job_state
 
     in_flight: dict = {}
+    # Resume support: rebuild in_flight from manifest rows already in 'assigned'
+    # state (e.g. from a prior orchestrator process that was killed mid-run).
+    # Group by job_id so the poll loop can drive these to terminal state.
+    if not args.dry_run:
+        resumed_groups: dict = {}
+        for r in manifest:
+            if r.status == "assigned" and r.job_id:
+                resumed_groups.setdefault(r.job_id, []).append(r)
+        for jid, rows in resumed_groups.items():
+            submitted_at = min((r.assigned_at or _time.time()) for r in rows)
+            in_flight[jid] = {
+                "files": [r.input_file for r in rows],
+                "submitted_at": submitted_at,
+                "last_log_ts": _time.time(),  # reset clock so stuck-detection is fair
+            }
+        if in_flight:
+            logger.info(
+                "resumed %d in-flight jobs covering %d assigned files",
+                len(in_flight), sum(len(v["files"]) for v in in_flight.values()),
+            )
     seconds_per_byte_ema: Optional[float] = None
 
     def manifest_by_file():
