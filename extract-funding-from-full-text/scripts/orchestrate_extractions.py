@@ -288,11 +288,90 @@ def poll_job_state(job_id):
 
 
 import argparse
+import json
 import logging
 import sys
 import time as _time
+from collections import Counter
+from datetime import datetime, timezone
 
 logger = logging.getLogger("orchestrate_extractions")
+
+
+def _render_readme(summary):
+    return f"""# arxiv-funding-statement-extractions
+
+Funding-statement extractions over `cometadata/arxiv-latex-extract-full-text/results-2026-04-24/`.
+
+- Extractor: `funding_statement_extractor` @ `statement-only-extraction`
+- Model: `lightonai/GTE-ModernColBERT-v1`
+- Config: Tier 2 (paragraph prefilter, regex floor 11.0, top_k=5, threshold=10.0)
+- Hardware: A100-large bf16, batch_size 512
+- Files processed: {summary['n_files']}
+- Status: {summary['status_counts']}
+- Total rows: {summary['total_rows']:,}
+- Total worker seconds: {summary['total_worker_seconds']:.0f}
+- Est cost @ $5/hr: ${summary['estimated_cost_usd']:.2f}
+- Completed: {summary['completed_at']}
+
+## Schema
+
+Per row in `predictions/*.parquet`:
+- `arxiv_id`, `doc_id`, `input_file`, `row_idx`
+- `predicted_statements`: list[str]
+- `predicted_details`: list[struct{{statement, score, query, paragraph_idx}}]
+- `text_length`, `latency_ms`, `error`
+"""
+
+
+def write_run_summary(manifest, output_repo, manifest_path):
+    """Write local run summary JSON and push summary + manifest snapshot + README to hub."""
+    manifest_path = Path(manifest_path)
+    summary = {
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "n_files": len(manifest),
+        "status_counts": dict(Counter(r.status for r in manifest)),
+        "total_rows": sum(
+            (r.row_count or 0) for r in manifest if r.status == "done"
+        ),
+        "total_worker_seconds": sum(
+            (r.worker_elapsed_s or 0) for r in manifest
+        ),
+        "estimated_cost_usd": sum(
+            (r.worker_elapsed_s or 0) for r in manifest
+        ) / 3600.0 * 5.0,
+        "failed_files": [
+            {"input_file": r.input_file, "last_error": r.last_error}
+            for r in manifest if r.status == "failed"
+        ],
+    }
+    summary_path = manifest_path.parent / (manifest_path.stem + "-summary.json")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, indent=2))
+
+    api = HfApi()
+    api.upload_file(
+        path_or_fileobj=str(summary_path),
+        path_in_repo="run_metadata/summary.json",
+        repo_id=output_repo,
+        repo_type="dataset",
+    )
+    api.upload_file(
+        path_or_fileobj=str(manifest_path),
+        path_in_repo="run_metadata/manifest-snapshot.parquet",
+        repo_id=output_repo,
+        repo_type="dataset",
+    )
+    readme = _render_readme(summary)
+    readme_path = manifest_path.parent / "README.md"
+    readme_path.write_text(readme)
+    api.upload_file(
+        path_or_fileobj=str(readme_path),
+        path_in_repo="README.md",
+        repo_id=output_repo,
+        repo_type="dataset",
+    )
+    return summary
 
 
 def parse_orch_args(argv=None):
@@ -553,6 +632,12 @@ def main(argv=None, *, submit_fn=None, poll_fn=None) -> int:
             # exit on the next iteration once everything is marked done.
             continue
         time.sleep(args.poll_interval_s)
+
+    if not args.dry_run:
+        try:
+            write_run_summary(manifest, args.output_repo, manifest_path)
+        except Exception as exc:
+            logger.warning("write_run_summary failed: %s", exc)
 
     return 0
 

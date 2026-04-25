@@ -345,6 +345,74 @@ def test_dry_run_exercises_state_machine(tmp_path, monkeypatch):
         assert r.completed_at is not None
 
 
+def test_write_run_summary_renders_local_json(tmp_path, monkeypatch):
+    import json
+
+    from scripts import orchestrate_extractions as mod
+
+    manifest = [
+        _row("dir/a.parquet", size_bytes=100_000, status="done",
+             attempts=1, job_id="j1", worker_elapsed_s=120.0,
+             output_path="predictions/a.parquet", row_count=500),
+        _row("dir/b.parquet", size_bytes=200_000, status="done",
+             attempts=1, job_id="j2", worker_elapsed_s=240.0,
+             output_path="predictions/b.parquet", row_count=900),
+        _row("dir/c.parquet", size_bytes=50_000, status="failed",
+             attempts=2, job_id="j3", last_error="job j3 stage=ERROR"),
+        _row("dir/d.parquet", size_bytes=75_000, status="pending"),
+    ]
+
+    upload_calls = []
+
+    class FakeApi:
+        def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id,
+                        repo_type, **kw):
+            upload_calls.append({
+                "path_or_fileobj": path_or_fileobj,
+                "path_in_repo": path_in_repo,
+                "repo_id": repo_id,
+                "repo_type": repo_type,
+            })
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+
+    manifest_path = tmp_path / "arxiv-extractions-2026-04-24.parquet"
+    mod.write_manifest(manifest, manifest_path)
+
+    mod.write_run_summary(manifest, "org/output-repo", manifest_path)
+
+    summary_path = tmp_path / "arxiv-extractions-2026-04-24-summary.json"
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text())
+    assert summary["n_files"] == 4
+    assert summary["status_counts"] == {"done": 2, "failed": 1, "pending": 1}
+    # total_rows = sum(row_count for done files)
+    assert summary["total_rows"] == 1400
+    # total_worker_seconds = sum(worker_elapsed_s) across all rows
+    assert summary["total_worker_seconds"] == 360.0
+    assert abs(summary["estimated_cost_usd"] - (360.0 / 3600.0 * 5.0)) < 1e-9
+    assert summary["failed_files"] == [
+        {"input_file": "dir/c.parquet", "last_error": "job j3 stage=ERROR"}
+    ]
+    assert "completed_at" in summary
+
+    assert len(upload_calls) == 3
+    paths_in_repo = {c["path_in_repo"] for c in upload_calls}
+    assert paths_in_repo == {
+        "run_metadata/summary.json",
+        "run_metadata/manifest-snapshot.parquet",
+        "README.md",
+    }
+    for c in upload_calls:
+        assert c["repo_id"] == "org/output-repo"
+        assert c["repo_type"] == "dataset"
+
+    readme_path = tmp_path / "README.md"
+    assert readme_path.exists()
+    readme_text = readme_path.read_text()
+    assert "A100-large bf16" in readme_text
+
+
 def test_poll_job_state_parses_logs_and_status(monkeypatch):
     from scripts import orchestrate_extractions as mod
 
