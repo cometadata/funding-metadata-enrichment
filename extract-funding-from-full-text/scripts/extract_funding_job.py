@@ -19,6 +19,33 @@ Designed to run on an HF Job (a100-large flavor) via `hf jobs uv run` on the
 """
 from __future__ import annotations
 
+import argparse
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="Run Tier-2 funding-statement extraction over a list of input parquets and push results to hub.",
+    )
+    p.add_argument("--input-repo", required=True,
+                   help="HF dataset repo id containing the input parquets.")
+    p.add_argument("--input-files", required=True,
+                   type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+                   help="Comma-separated list of in-repo parquet paths to process.")
+    p.add_argument("--output-repo", required=True,
+                   help="HF dataset repo id to push prediction parquets to.")
+    p.add_argument("--job-tag", required=True,
+                   help="Free-form tag for log correlation with the orchestrator.")
+    p.add_argument("--text-column", default="text",
+                   help="Name of the text column to extract from (default: text).")
+    p.add_argument("--id-column", default="arxiv_id",
+                   help="Name of the primary id column (default: arxiv_id).")
+    p.add_argument("--colbert-model", default="lightonai/GTE-ModernColBERT-v1")
+    p.add_argument("--batch-size", type=int, default=512)
+    p.add_argument("--dtype", choices=["auto", "fp32", "fp16", "bf16"], default="bf16")
+    p.add_argument("--allow-cpu", action="store_true",
+                   help="Skip CUDA probe; for local smoke tests only.")
+    return p.parse_args(argv)
+
 
 def make_output_row(result):
     meta = result.metadata or {}

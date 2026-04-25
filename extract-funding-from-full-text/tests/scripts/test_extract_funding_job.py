@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from scripts.extract_funding_job import make_output_row
+from scripts.extract_funding_job import make_output_row, parse_args
 
 
 def _fake_statement(statement, score, query, paragraph_idx):
@@ -48,3 +48,29 @@ def test_make_output_row_zero_predictions_kept():
     assert row["predicted_statements"] == []
     assert row["predicted_details"] == []
     assert row["error"] is None
+
+
+def test_parse_args_minimum():
+    args = parse_args([
+        "--input-repo", "cometadata/arxiv-latex-extract-full-text",
+        "--input-files", "a.parquet,b.parquet",
+        "--output-repo", "cometadata/arxiv-funding-statement-extractions",
+        "--job-tag", "abc123",
+    ])
+    assert args.input_repo == "cometadata/arxiv-latex-extract-full-text"
+    assert args.input_files == ["a.parquet", "b.parquet"]
+    assert args.output_repo == "cometadata/arxiv-funding-statement-extractions"
+    assert args.job_tag == "abc123"
+    assert args.text_column == "text"
+    assert args.id_column == "arxiv_id"
+    assert args.dtype == "bf16"
+    assert args.batch_size == 512
+    assert args.colbert_model == "lightonai/GTE-ModernColBERT-v1"
+
+
+def test_parse_args_input_files_strips_whitespace():
+    args = parse_args([
+        "--input-repo", "x", "--input-files", " a.parquet , b.parquet ",
+        "--output-repo", "y", "--job-tag", "z",
+    ])
+    assert args.input_files == ["a.parquet", "b.parquet"]
