@@ -134,3 +134,59 @@ def list_input_files_with_sizes(repo_id, subdir):
         out.append((path, int(size)))
     out.sort(key=lambda t: t[0])
     return out
+
+
+def seed_or_merge_manifest(existing, listing, *, seconds_per_byte):
+    by_file = {r.input_file: r for r in existing}
+    for input_file, size_bytes in listing:
+        if input_file in by_file:
+            continue
+        by_file[input_file] = ManifestRow(
+            input_file=input_file,
+            size_bytes=int(size_bytes),
+            est_seconds=float(size_bytes) * seconds_per_byte,
+            status="pending",
+            attempts=0,
+            job_id=None,
+            assigned_at=None,
+            completed_at=None,
+            output_path=None,
+            last_error=None,
+            worker_elapsed_s=None,
+            row_count=None,
+        )
+    return [by_file[k] for k in sorted(by_file)]
+
+
+def reconcile_against_outputs(rows, existing_outputs):
+    import time as _time
+    out = []
+    for r in rows:
+        candidate = f"predictions/{Path(r.input_file).name}"
+        if candidate in existing_outputs and r.status != "done":
+            r = ManifestRow(**{
+                **asdict(r),
+                "status": "done",
+                "output_path": candidate,
+                "completed_at": _time.time(),
+            })
+        out.append(r)
+    return out
+
+
+def list_existing_outputs(repo_id):
+    """Return set of in-repo paths like {'predictions/x.parquet', ...}."""
+    api = HfApi()
+    try:
+        entries = api.list_repo_tree(
+            repo_id, path_in_repo="predictions",
+            repo_type="dataset", recursive=True,
+        )
+    except Exception:
+        return set()
+    out = set()
+    for entry in entries:
+        path = getattr(entry, "path", None)
+        if path and path.endswith(".parquet"):
+            out.add(path)
+    return out

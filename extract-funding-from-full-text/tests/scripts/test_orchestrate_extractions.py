@@ -141,3 +141,40 @@ def test_list_input_files_with_sizes(monkeypatch):
         ("results-2026-04-24/2024/arXiv_src_2401_001.parquet", 1_000_000),
         ("results-2026-04-24/2024/arXiv_src_2401_002.parquet", 2_000_000),
     ]
+
+
+def test_seed_merges_new_files_preserves_existing():
+    from scripts.orchestrate_extractions import seed_or_merge_manifest
+
+    existing = [
+        _row("a.parquet", size_bytes=100_000, est_seconds=4.5,
+             status="done", attempts=1, job_id="j1",
+             assigned_at=1.0, completed_at=2.0,
+             output_path="predictions/a.parquet", worker_elapsed_s=90.0,
+             row_count=100),
+    ]
+    listing = [("a.parquet", 100_000), ("b.parquet", 200_000)]
+    merged = seed_or_merge_manifest(existing, listing, seconds_per_byte=4.5e-5)
+    by_file = {r.input_file: r for r in merged}
+    assert by_file["a.parquet"].status == "done"
+    assert by_file["a.parquet"].attempts == 1
+    assert by_file["b.parquet"].status == "pending"
+    assert by_file["b.parquet"].est_seconds == 200_000 * 4.5e-5
+    assert by_file["b.parquet"].size_bytes == 200_000
+
+
+def test_reconcile_marks_done_when_output_exists():
+    from scripts.orchestrate_extractions import reconcile_against_outputs
+
+    rows = [
+        _row("dir/a.parquet", status="assigned", attempts=1, job_id="j1",
+             assigned_at=1.0),
+        _row("dir/b.parquet", status="pending"),
+    ]
+    existing_outputs = {"predictions/a.parquet"}
+    out = reconcile_against_outputs(rows, existing_outputs)
+    by = {r.input_file: r for r in out}
+    assert by["dir/a.parquet"].status == "done"
+    assert by["dir/a.parquet"].output_path == "predictions/a.parquet"
+    assert by["dir/a.parquet"].completed_at is not None
+    assert by["dir/b.parquet"].status == "pending"
