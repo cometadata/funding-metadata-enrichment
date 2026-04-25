@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -75,6 +77,8 @@ def parse_args(argv=None):
                    help="Skip CUDA probe; for local smoke tests only.")
     p.add_argument("--commit-batch-size", type=int, default=25,
                    help="Number of staged prediction files to combine into a single hub commit (default: 25).")
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="Skip the preflight commit check before starting GPU work.")
     return p.parse_args(argv)
 
 
@@ -134,6 +138,69 @@ def stage_parquet_locally(rows, *, path_in_repo, staging_dir):
     local_path = staging_dir / Path(path_in_repo).name
     pq.write_table(table, local_path, compression="zstd")
     return local_path
+
+
+_RETRY_HINT_RE = re.compile(
+    r"retry.*?in\s+(?:about\s+)?(\d+)\s+(second|minute|hour)s?", re.IGNORECASE
+)
+
+
+def _parse_retry_hint_seconds(message: str) -> Optional[float]:
+    """Extract HF's "retry in X minute/hour" hint from a 429 error message."""
+    m = _RETRY_HINT_RE.search(message or "")
+    if not m:
+        return None
+    n = int(m.group(1))
+    unit = m.group(2).lower()
+    return n * {"second": 1, "minute": 60, "hour": 3600}[unit]
+
+
+def preflight_commit_check(repo_id, *, job_tag, max_wait_s=1800.0, staging_dir=None):
+    """Probe hub commit availability before doing expensive GPU work.
+
+    Stages a tiny status JSON and tries to commit it. Honours HF's
+    "retry in N minute/hour" hint from 429 responses (capped at max_wait_s).
+    Raises RuntimeError if the hub remains unwilling after one full retry
+    cycle, so the worker can exit cleanly without burning GPU time.
+    """
+    import json
+    from datetime import datetime, timezone
+    staging_dir = Path(staging_dir or "/tmp/extract_funding_outputs")
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "job_tag": job_tag,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "preflight": True,
+    }
+    local_path = staging_dir / f"_preflight_{job_tag}.json"
+    local_path.write_text(json.dumps(payload))
+    api = HfApi()
+    last_exc: Optional[Exception] = None
+    for attempt in range(8):
+        try:
+            api.upload_file(
+                path_or_fileobj=str(local_path),
+                path_in_repo=f"worker_status/{job_tag}.json",
+                repo_id=repo_id,
+                repo_type="dataset",
+                commit_message=f"worker {job_tag} preflight",
+            )
+            logger.info("preflight commit succeeded on attempt %d", attempt + 1)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if "429" not in str(exc):
+                raise
+            hint = _parse_retry_hint_seconds(str(exc))
+            wait_s = min(hint or 60.0, max_wait_s)
+            logger.warning(
+                "preflight hit 429 (attempt %d/8); HF hint=%s, sleeping %.0fs",
+                attempt + 1, hint, wait_s,
+            )
+            time.sleep(wait_s)
+    raise RuntimeError(
+        "preflight commit still 429 after exhausting retry budget"
+    ) from last_exc
 
 
 def commit_staged_batch(staged, *, repo_id, batch_index, max_retries=5, retry_sleep_s=60.0):
@@ -258,6 +325,16 @@ def main(argv=None) -> int:
     logger.info("loaded %d queries", len(queries))
 
     staging = Path("/tmp/extract_funding_outputs")
+    if not args.skip_preflight:
+        try:
+            preflight_commit_check(args.output_repo, job_tag=args.job_tag,
+                                   staging_dir=staging)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "preflight commit check failed; aborting before GPU work: %s", exc,
+            )
+            return 5
+
     staged_buffer: list[dict] = []
     batch_index = 0
     consecutive_commit_failures = 0

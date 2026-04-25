@@ -332,3 +332,83 @@ def test_parse_args_commit_batch_size_override():
         "--commit-batch-size", "10",
     ])
     assert args.commit_batch_size == 10
+
+
+def test_parse_retry_hint_seconds_variants():
+    from scripts.extract_funding_job import _parse_retry_hint_seconds
+    assert _parse_retry_hint_seconds("retry this action in about 1 hour.") == 3600
+    assert _parse_retry_hint_seconds("retry in 30 minutes") == 1800
+    assert _parse_retry_hint_seconds("please retry in 45 seconds") == 45
+    assert _parse_retry_hint_seconds("no hint here") is None
+    assert _parse_retry_hint_seconds("") is None
+
+
+def test_preflight_commit_check_succeeds_first_try(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+    calls = []
+
+    class FakeApi:
+        def upload_file(self, **kw):
+            calls.append(kw)
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    mod.preflight_commit_check("org/repo", job_tag="t1", staging_dir=tmp_path)
+    assert len(calls) == 1
+    assert calls[0]["path_in_repo"] == "worker_status/t1.json"
+    assert calls[0]["repo_id"] == "org/repo"
+
+
+def test_preflight_commit_check_retries_429_and_succeeds(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+    sleeps = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+
+    attempts = {"n": 0}
+
+    class FakeApi:
+        def upload_file(self, **kw):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise RuntimeError("HTTP 429: retry in 2 minutes")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    mod.preflight_commit_check("org/repo", job_tag="t2", max_wait_s=10.0,
+                               staging_dir=tmp_path)
+    assert attempts["n"] == 3
+    # First two 429s should each have slept; the hint says 120s but max_wait_s caps to 10
+    assert sleeps == [10.0, 10.0]
+
+
+def test_preflight_commit_check_raises_after_exhaustion(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    class FakeApi:
+        def upload_file(self, **kw):
+            raise RuntimeError("HTTP 429 too many")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    import pytest
+    with pytest.raises(RuntimeError, match="preflight commit still 429"):
+        mod.preflight_commit_check("org/repo", job_tag="t3", staging_dir=tmp_path)
+
+
+def test_preflight_commit_check_reraises_non_429(tmp_path, monkeypatch):
+    from scripts import extract_funding_job as mod
+
+    class FakeApi:
+        def upload_file(self, **kw):
+            raise RuntimeError("HTTP 401 unauthorized")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    import pytest
+    with pytest.raises(RuntimeError, match="401"):
+        mod.preflight_commit_check("org/repo", job_tag="t4", staging_dir=tmp_path)
+
+
+def test_parse_args_skip_preflight_default():
+    args = parse_args([
+        "--input-repo", "x", "--input-files", "a.parquet",
+        "--output-repo", "y", "--job-tag", "z",
+    ])
+    assert args.skip_preflight is False
