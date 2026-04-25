@@ -177,20 +177,25 @@ def reconcile_against_outputs(rows, existing_outputs):
 
 
 def list_existing_outputs(repo_id):
-    """Return set of in-repo paths like {'predictions/x.parquet', ...}."""
+    """Return set of in-repo paths like {'predictions/x.parquet', ...}.
+
+    Returns an empty set if the repo or the predictions/ subdir does not yet
+    exist. The list_repo_tree() call returns a generator that defers HTTP
+    requests until iteration, so the try must wrap the for-loop, not the call.
+    """
     api = HfApi()
+    out = set()
     try:
         entries = api.list_repo_tree(
             repo_id, path_in_repo="predictions",
             repo_type="dataset", recursive=True,
         )
+        for entry in entries:
+            path = getattr(entry, "path", None)
+            if path and path.endswith(".parquet"):
+                out.add(path)
     except Exception:
         return set()
-    out = set()
-    for entry in entries:
-        path = getattr(entry, "path", None)
-        if path and path.endswith(".parquet"):
-            out.add(path)
     return out
 
 
