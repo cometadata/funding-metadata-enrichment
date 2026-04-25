@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import HfApi
+from huggingface_hub import CommitOperationAdd, HfApi
 
 logger = logging.getLogger("extract_funding_job")
 
@@ -73,6 +73,8 @@ def parse_args(argv=None):
     p.add_argument("--dtype", choices=["auto", "fp32", "fp16", "bf16"], default="bf16")
     p.add_argument("--allow-cpu", action="store_true",
                    help="Skip CUDA probe; for local smoke tests only.")
+    p.add_argument("--commit-batch-size", type=int, default=25,
+                   help="Number of staged prediction files to combine into a single hub commit (default: 25).")
     return p.parse_args(argv)
 
 
@@ -101,6 +103,11 @@ def make_output_row(result):
 
 
 def push_parquet_to_hub(rows, *, repo_id, path_in_repo, staging_dir):
+    """DEPRECATED: one-commit-per-file path. Retained for backward compat / tests.
+
+    New code should use ``stage_parquet_locally`` + ``commit_staged_batch`` to
+    avoid the hub's 320 commits/hour rate limit.
+    """
     if rows is None:
         rows = []
     table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
@@ -115,6 +122,70 @@ def push_parquet_to_hub(rows, *, repo_id, path_in_repo, staging_dir):
         repo_type="dataset",
         commit_message=f"add {path_in_repo}",
     )
+
+
+def stage_parquet_locally(rows, *, path_in_repo, staging_dir):
+    """Write rows to a local parquet file using OUTPUT_SCHEMA. Returns local Path."""
+    if rows is None:
+        rows = []
+    table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
+    staging_dir = Path(staging_dir)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    local_path = staging_dir / Path(path_in_repo).name
+    pq.write_table(table, local_path, compression="zstd")
+    return local_path
+
+
+def commit_staged_batch(staged, *, repo_id, batch_index, max_retries=5, retry_sleep_s=60.0):
+    """Commit a batch of staged files in a single hub commit.
+
+    ``staged`` is a list of dicts with keys ``path_in_repo`` and ``local_path``.
+    Retries on HTTP 429 up to ``max_retries`` times with ``retry_sleep_s`` between attempts.
+    """
+    if not staged:
+        return
+    operations = [
+        CommitOperationAdd(
+            path_in_repo=item["path_in_repo"],
+            path_or_fileobj=str(item["local_path"]),
+        )
+        for item in staged
+    ]
+    msg = f"add {len(staged)} prediction files (batch {batch_index})"
+    api = HfApi()
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            api.create_commit(
+                repo_id=repo_id,
+                repo_type="dataset",
+                operations=operations,
+                commit_message=msg,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if "429" in str(exc):
+                logger.warning(
+                    "create_commit hit 429 (attempt %d/%d); sleeping %.0fs",
+                    attempt + 1, max_retries, retry_sleep_s,
+                )
+                time.sleep(retry_sleep_s)
+                continue
+            raise
+    raise RuntimeError(
+        f"create_commit failed after {max_retries} retries on 429"
+    ) from last_exc
+
+
+def emit_done_lines(staged):
+    """Print the orchestrator-parsed [done ...] line for each file in a committed batch."""
+    for item in staged:
+        print(
+            f"[done file={item['input_file']} rows={item['rows']} "
+            f"elapsed_s={item['elapsed_s']:.1f}]",
+            flush=True,
+        )
 
 
 def _apply_dtype_patch(dtype_str: str) -> None:
@@ -187,6 +258,8 @@ def main(argv=None) -> int:
     logger.info("loaded %d queries", len(queries))
 
     staging = Path("/tmp/extract_funding_outputs")
+    staged_buffer: list[dict] = []
+    batch_index = 0
 
     for input_file in args.input_files:
         t0 = time.perf_counter()
@@ -235,24 +308,54 @@ def main(argv=None) -> int:
                 output_rows.append(make_output_row(result))
 
             out_path = f"predictions/{Path(input_file).name}"
-            push_parquet_to_hub(output_rows, repo_id=args.output_repo,
-                                path_in_repo=out_path, staging_dir=staging)
-            elapsed = time.perf_counter() - t0
-            # CRITICAL: this exact format is parsed by the orchestrator
-            print(
-                f"[done file={input_file} rows={len(output_rows)} elapsed_s={elapsed:.1f}]",
-                flush=True,
+            local_path = stage_parquet_locally(
+                output_rows, path_in_repo=out_path, staging_dir=staging,
             )
+            elapsed = time.perf_counter() - t0
+            staged_buffer.append({
+                "input_file": input_file,
+                "path_in_repo": out_path,
+                "local_path": local_path,
+                "rows": len(output_rows),
+                "elapsed_s": elapsed,
+            })
+            logger.info("[staged file=%s rows=%d local=%s buffered=%d]",
+                        input_file, len(output_rows), local_path, len(staged_buffer))
             print(
                 f"[file_summary file={input_file} processed={counters['processed']} "
                 f"skipped_status={counters['skipped_status']} "
                 f"skipped_empty={counters['skipped_empty']}]",
                 flush=True,
             )
+
+            if len(staged_buffer) >= args.commit_batch_size:
+                batch_index += 1
+                logger.info("committing batch %d (%d files)", batch_index, len(staged_buffer))
+                commit_staged_batch(
+                    staged_buffer, repo_id=args.output_repo, batch_index=batch_index,
+                )
+                # Only emit [done ...] AFTER successful commit — orchestrator
+                # treats these as proof the file is on hub.
+                emit_done_lines(staged_buffer)
+                staged_buffer = []
         except Exception as exc:  # noqa: BLE001
             logger.exception("[fail file=%s] %s", input_file, exc)
             # Continue to next file rather than failing the whole job —
             # the orchestrator will retry the unfinished file.
+
+    # Flush any remaining staged files in a final commit.
+    if staged_buffer:
+        batch_index += 1
+        logger.info("committing final batch %d (%d files)", batch_index, len(staged_buffer))
+        try:
+            commit_staged_batch(
+                staged_buffer, repo_id=args.output_repo, batch_index=batch_index,
+            )
+            emit_done_lines(staged_buffer)
+            staged_buffer = []
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("final batch commit failed: %s", exc)
+            return 3
 
     return 0
 
