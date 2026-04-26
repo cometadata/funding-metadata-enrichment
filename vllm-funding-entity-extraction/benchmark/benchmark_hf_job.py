@@ -78,7 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Client knobs
     p.add_argument("--concurrency", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.0)
-    p.add_argument("--max-tokens", type=int, default=2048)
+    p.add_argument("--max-tokens", type=int, default=4096)
     p.add_argument("--max-input-chars", type=int, default=8000,
                    help="Skip statements longer than this with InputTooLong error (no HTTP call). 0 disables.")
 
@@ -86,7 +86,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--vllm-port", type=int, default=8000)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.92)
     p.add_argument("--tensor-parallel-size", type=int, default=1)
-    p.add_argument("--max-model-len", type=int, default=4096)
+    p.add_argument("--max-model-len", type=int, default=8192)
     p.add_argument("--readiness-timeout-seconds", type=int, default=900)
 
     # Server passthrough (after `--`)
@@ -267,6 +267,14 @@ async def _run_benchmark_extraction(
             flat_statements.append(stmt)
             flat_back_index.append((ri, si))
     n_statements_total = len(flat_statements)
+
+    # Submit longest first so the long-output tail decodes during ramp-up
+    # rather than dragging wall clock at shutdown.
+    if flat_statements:
+        order = sorted(range(len(flat_statements)), key=lambda i: len(flat_statements[i]), reverse=True)
+        flat_statements = [flat_statements[i] for i in order]
+        flat_back_index = [flat_back_index[i] for i in order]
+
     logger.info("dispatching %d statements across %d rows", n_statements_total, n_rows)
 
     t_start = time.perf_counter()

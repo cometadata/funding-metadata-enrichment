@@ -15,7 +15,7 @@ def test_parser_serve_defaults():
     assert args.served_name == "funding-extraction"
     assert args.port == 8000
     assert args.gpu_memory_utilization == 0.92
-    assert args.max_model_len == 4096
+    assert args.max_model_len == 8192
 
 
 def test_parser_serve_passthrough_after_double_dash():
@@ -33,7 +33,7 @@ def test_parser_run_required_args():
     assert args.output == "out.parquet"
     assert args.vllm_url == "http://localhost:8000"
     assert args.concurrency == 256
-    assert args.max_tokens == 2048
+    assert args.max_tokens == 4096
     assert args.max_input_chars == 8000
 
 

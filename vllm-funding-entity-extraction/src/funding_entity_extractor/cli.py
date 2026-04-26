@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--dtype", default="bfloat16")
     s.add_argument("--gpu-memory-utilization", type=float, default=0.92)
-    s.add_argument("--max-model-len", type=int, default=4096)
+    s.add_argument("--max-model-len", type=int, default=8192)
     s.add_argument("--tensor-parallel-size", type=int, default=1)
     s.add_argument("--max-lora-rank", type=int, default=64)
     s.add_argument("--max-loras", type=int, default=1)
@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-retries", type=int, default=3)
     r.add_argument("--temperature", type=float, default=0.0)
     r.add_argument("--top-p", type=float, default=1.0)
-    r.add_argument("--max-tokens", type=int, default=2048)
+    r.add_argument("--max-tokens", type=int, default=4096)
     r.add_argument("--max-input-chars", type=int, default=8000,
                    help="Skip statements longer than this with InputTooLong error (no HTTP call). 0 disables.")
     r.add_argument("--no-resume", action="store_true")
