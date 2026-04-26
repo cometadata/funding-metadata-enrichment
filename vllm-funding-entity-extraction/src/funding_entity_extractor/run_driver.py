@@ -93,27 +93,38 @@ async def _run_async(cfg: RunConfig) -> int:
         output_path.with_suffix(output_path.suffix + ".partial") if use_sidecar else output_path
     )
 
+    pending: list[dict] = []
+    flat_statements: list[str] = []
+    flat_back_index: list[tuple[int, int]] = []
+    for row in iter_input_rows(input_path, text_field=cfg.text_field):
+        rows_seen += 1
+        key = tuple(row[k] for k in cfg.row_id_fields)
+        if key in skip_keys:
+            continue
+        ri = len(pending)
+        pending.append(row)
+        for si, stmt in enumerate(row[cfg.text_field]):
+            flat_statements.append(stmt)
+            flat_back_index.append((ri, si))
+    statements_seen = len(flat_statements)
+
+    flat_results = await extract_statements(
+        flat_statements,
+        vllm_url=cfg.vllm_url,
+        served_name=cfg.served_name,
+        concurrency=cfg.concurrency,
+        max_retries=cfg.max_retries,
+        request_timeout=cfg.request_timeout,
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+    )
+
+    per_row: list[list] = [[None] * len(r[cfg.text_field]) for r in pending]
+    for result, (ri, si) in zip(flat_results, flat_back_index):
+        per_row[ri][si] = result
+
     with ExtractionWriter(write_target, schema=out_schema, write_batch_size=cfg.write_batch_size) as writer:
-        for row in iter_input_rows(input_path, text_field=cfg.text_field):
-            rows_seen += 1
-            key = tuple(row[k] for k in cfg.row_id_fields)
-            if key in skip_keys:
-                continue
-
-            statements: list[str] = list(row[cfg.text_field])
-            statements_seen += len(statements)
-
-            results = await extract_statements(
-                statements,
-                vllm_url=cfg.vllm_url,
-                served_name=cfg.served_name,
-                concurrency=cfg.concurrency,
-                max_retries=cfg.max_retries,
-                request_timeout=cfg.request_timeout,
-                temperature=cfg.temperature,
-                max_tokens=cfg.max_tokens,
-            )
-
+        for row, results in zip(pending, per_row):
             extracted_funders: list[list[dict] | None] = []
             extraction_raw: list[str] = []
             extraction_error: list[str | None] = []

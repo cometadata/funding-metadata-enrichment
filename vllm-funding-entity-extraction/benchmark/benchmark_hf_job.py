@@ -78,7 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Client knobs
     p.add_argument("--concurrency", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.0)
-    p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--max-tokens", type=int, default=1024)
 
     # Server knobs (passed to `funding-extract serve`)
     p.add_argument("--vllm-port", type=int, default=8000)
@@ -257,23 +257,33 @@ async def _run_benchmark_extraction(
     nonempty_funders = 0
     n_funders_total = 0
     n_awards_total = 0
-    n_statements_total = 0
+
+    flat_statements: list[str] = []
+    flat_back_index: list[tuple[int, int]] = []
+    for ri, row in enumerate(rows):
+        for si, stmt in enumerate(row["predicted_statements"]):
+            flat_statements.append(stmt)
+            flat_back_index.append((ri, si))
+    n_statements_total = len(flat_statements)
+    logger.info("dispatching %d statements across %d rows", n_statements_total, n_rows)
 
     t_start = time.perf_counter()
-    for i, row in enumerate(rows):
-        statements: list[str] = list(row["predicted_statements"])
-        n_statements_total += len(statements)
+    flat_results = await extract_statements(
+        flat_statements,
+        vllm_url=f"http://127.0.0.1:{args.vllm_port}",
+        concurrency=args.concurrency,
+        max_retries=3,
+        request_timeout=60.0,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+    )
+    wall_seconds = time.perf_counter() - t_start
 
-        results = await extract_statements(
-            statements,
-            vllm_url=f"http://127.0.0.1:{args.vllm_port}",
-            concurrency=args.concurrency,
-            max_retries=3,
-            request_timeout=60.0,
-            temperature=args.temperature,
-            max_tokens=args.max_tokens,
-        )
+    per_row: list[list] = [[None] * len(r["predicted_statements"]) for r in rows]
+    for result, (ri, si) in zip(flat_results, flat_back_index):
+        per_row[ri][si] = result
 
+    for i, (row, results) in enumerate(zip(rows, per_row)):
         extracted_funders: list[Any] = []
         extraction_raw: list[str] = []
         extraction_error: list[str | None] = []
@@ -304,15 +314,11 @@ async def _run_benchmark_extraction(
         output_rows.append(out)
 
         if (i + 1) % args.log_every == 0 or i == n_rows - 1:
-            elapsed = time.perf_counter() - t_start
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
             pr = parse_ok / n_statements_total if n_statements_total else 0
             logger.info(
-                "[%d/%d] rows/s=%.2f stmts=%d parse_ok=%.1f%%",
-                i + 1, n_rows, rate, n_statements_total, pr * 100,
+                "[regroup %d/%d] parse_ok=%.1f%% stmts=%d",
+                i + 1, n_rows, pr * 100, n_statements_total,
             )
-
-    wall_seconds = time.perf_counter() - t_start
 
     aggregates = {
         "n_rows": n_rows,
@@ -465,11 +471,17 @@ def _push_to_hub(
         private=private,
     )
 
-    metrics_combined = [metrics_row, run_config]
-    logger.info("pushing metrics (n=%d) to %s", len(metrics_combined), repo_id)
-    Dataset.from_list(metrics_combined).push_to_hub(
+    logger.info("pushing metrics row to %s :: metrics-%s", repo_id, run_name)
+    Dataset.from_list([metrics_row]).push_to_hub(
         repo_id,
         config_name=f"metrics-{run_name}",
+        private=private,
+    )
+
+    logger.info("pushing run_config row to %s :: run-config-%s", repo_id, run_name)
+    Dataset.from_list([run_config]).push_to_hub(
+        repo_id,
+        config_name=f"run-config-{run_name}",
         private=private,
     )
 

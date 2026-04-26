@@ -33,7 +33,7 @@ def test_parser_run_required_args():
     assert args.output == "out.parquet"
     assert args.vllm_url == "http://localhost:8000"
     assert args.concurrency == 256
-    assert args.max_tokens == 512
+    assert args.max_tokens == 1024
 
 
 def test_run_dispatch_calls_run_extraction(monkeypatch, tmp_path):

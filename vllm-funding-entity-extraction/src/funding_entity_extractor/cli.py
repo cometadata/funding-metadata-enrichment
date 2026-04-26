@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-retries", type=int, default=3)
     r.add_argument("--temperature", type=float, default=0.0)
     r.add_argument("--top-p", type=float, default=1.0)
-    r.add_argument("--max-tokens", type=int, default=512)
+    r.add_argument("--max-tokens", type=int, default=1024)
     r.add_argument("--no-resume", action="store_true")
     r.add_argument("--log-every", type=int, default=50)
 
