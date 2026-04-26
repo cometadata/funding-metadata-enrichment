@@ -109,14 +109,6 @@ async def _run_async(cfg: RunConfig) -> int:
             flat_back_index.append((ri, si))
     statements_seen = len(flat_statements)
 
-    # Submit longest statements first: the long-output tail then decodes during
-    # ramp-up rather than dragging wall clock at shutdown. Regroup uses
-    # flat_back_index so submission order does not affect output correctness.
-    if flat_statements:
-        order = sorted(range(len(flat_statements)), key=lambda i: len(flat_statements[i]), reverse=True)
-        flat_statements = [flat_statements[i] for i in order]
-        flat_back_index = [flat_back_index[i] for i in order]
-
     flat_results = await extract_statements(
         flat_statements,
         vllm_url=cfg.vllm_url,

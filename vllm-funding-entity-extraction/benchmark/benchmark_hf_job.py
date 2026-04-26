@@ -267,14 +267,6 @@ async def _run_benchmark_extraction(
             flat_statements.append(stmt)
             flat_back_index.append((ri, si))
     n_statements_total = len(flat_statements)
-
-    # Submit longest first so the long-output tail decodes during ramp-up
-    # rather than dragging wall clock at shutdown.
-    if flat_statements:
-        order = sorted(range(len(flat_statements)), key=lambda i: len(flat_statements[i]), reverse=True)
-        flat_statements = [flat_statements[i] for i in order]
-        flat_back_index = [flat_back_index[i] for i in order]
-
     logger.info("dispatching %d statements across %d rows", n_statements_total, n_rows)
 
     t_start = time.perf_counter()
