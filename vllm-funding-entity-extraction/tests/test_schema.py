@@ -35,6 +35,8 @@ def test_extraction_columns_names():
         "extraction_raw",
         "extraction_error",
         "extraction_latency_ms",
+        "extraction_prompt_tokens",
+        "extraction_completion_tokens",
     ]
 
 
@@ -51,6 +53,10 @@ def test_output_schema_appends_extraction_columns_to_input():
         "extraction_raw",
         "extraction_error",
         "extraction_latency_ms",
+        "extraction_prompt_tokens",
+        "extraction_completion_tokens",
     ]
     assert out.field("extraction_latency_ms").type == pa.list_(pa.float64())
     assert out.field("extraction_error").type == pa.list_(pa.string())
+    assert out.field("extraction_prompt_tokens").type == pa.list_(pa.int64())
+    assert out.field("extraction_completion_tokens").type == pa.list_(pa.int64())

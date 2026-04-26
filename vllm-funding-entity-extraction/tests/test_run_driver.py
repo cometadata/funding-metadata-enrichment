@@ -60,18 +60,25 @@ def test_run_extraction_filters_empty_rows_and_writes_extractions(input_parquet,
     arxiv_ids = table.column("arxiv_id").to_pylist()
     assert set(arxiv_ids) == {"paper-A", "paper-C", "paper-E"}
 
-    # paper-C has 2 statements -> all four extraction columns are length-2 lists
+    # paper-C has 2 statements -> all extraction columns are length-2 lists
     paper_c_idx = arxiv_ids.index("paper-C")
     extracted = table.column("extracted_funders").to_pylist()[paper_c_idx]
     raws = table.column("extraction_raw").to_pylist()[paper_c_idx]
     errors = table.column("extraction_error").to_pylist()[paper_c_idx]
     latencies = table.column("extraction_latency_ms").to_pylist()[paper_c_idx]
+    prompt_tokens = table.column("extraction_prompt_tokens").to_pylist()[paper_c_idx]
+    completion_tokens = table.column("extraction_completion_tokens").to_pylist()[paper_c_idx]
     assert len(extracted) == 2
     assert len(raws) == 2
     assert len(errors) == 2
     assert len(latencies) == 2
+    assert len(prompt_tokens) == 2
+    assert len(completion_tokens) == 2
     assert errors == [None, None]
     assert all(e[0]["funder_name"] == "NSF" for e in extracted)
+    # _ok_payload sets usage.prompt_tokens=10, completion_tokens=5
+    assert prompt_tokens == [10, 10]
+    assert completion_tokens == [5, 5]
 
 
 def test_run_extraction_resumes_skipping_already_done_rows(input_parquet, tmp_path):

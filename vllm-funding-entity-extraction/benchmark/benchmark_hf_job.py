@@ -291,6 +291,8 @@ async def _run_benchmark_extraction(
         extraction_raw: list[str] = []
         extraction_error: list[str | None] = []
         extraction_latency: list[float] = []
+        extraction_prompt_tokens: list[int] = []
+        extraction_completion_tokens: list[int] = []
 
         for r in results:
             if r.error is None and r.funders is not None:
@@ -306,6 +308,8 @@ async def _run_benchmark_extraction(
             extraction_raw.append(r.raw)
             extraction_error.append(r.error)
             extraction_latency.append(r.latency_ms)
+            extraction_prompt_tokens.append(r.prompt_tokens)
+            extraction_completion_tokens.append(r.completion_tokens)
             all_latencies.append(r.latency_ms)
             all_completion_tokens.append(r.completion_tokens)
 
@@ -314,6 +318,8 @@ async def _run_benchmark_extraction(
         out["extraction_raw"] = extraction_raw
         out["extraction_error"] = extraction_error
         out["extraction_latency_ms"] = extraction_latency
+        out["extraction_prompt_tokens"] = extraction_prompt_tokens
+        out["extraction_completion_tokens"] = extraction_completion_tokens
         output_rows.append(out)
 
         if (i + 1) % args.log_every == 0 or i == n_rows - 1:

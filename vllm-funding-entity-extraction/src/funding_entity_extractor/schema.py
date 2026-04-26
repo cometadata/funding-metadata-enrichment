@@ -36,6 +36,8 @@ EXTRACTION_COLUMNS: list[tuple[str, pa.DataType]] = [
     ("extraction_raw", pa.list_(pa.string())),
     ("extraction_error", pa.list_(pa.string())),
     ("extraction_latency_ms", pa.list_(pa.float64())),
+    ("extraction_prompt_tokens", pa.list_(pa.int64())),
+    ("extraction_completion_tokens", pa.list_(pa.int64())),
 ]
 
 

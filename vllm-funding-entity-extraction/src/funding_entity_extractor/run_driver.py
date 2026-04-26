@@ -131,6 +131,8 @@ async def _run_async(cfg: RunConfig) -> int:
             extraction_raw: list[str] = []
             extraction_error: list[str | None] = []
             extraction_latency: list[float] = []
+            extraction_prompt_tokens: list[int] = []
+            extraction_completion_tokens: list[int] = []
             for r in results:
                 if r.error is None and r.funders is not None:
                     parse_ok += 1
@@ -140,12 +142,16 @@ async def _run_async(cfg: RunConfig) -> int:
                 extraction_raw.append(r.raw)
                 extraction_error.append(r.error)
                 extraction_latency.append(r.latency_ms)
+                extraction_prompt_tokens.append(r.prompt_tokens)
+                extraction_completion_tokens.append(r.completion_tokens)
 
             out_row = dict(row)
             out_row["extracted_funders"] = extracted_funders
             out_row["extraction_raw"] = extraction_raw
             out_row["extraction_error"] = extraction_error
             out_row["extraction_latency_ms"] = extraction_latency
+            out_row["extraction_prompt_tokens"] = extraction_prompt_tokens
+            out_row["extraction_completion_tokens"] = extraction_completion_tokens
             writer.write(out_row)
 
             rows_done += 1
