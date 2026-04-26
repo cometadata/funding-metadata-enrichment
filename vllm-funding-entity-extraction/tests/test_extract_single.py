@@ -103,6 +103,33 @@ async def test_extract_one_retries_on_503_then_succeeds():
 
 
 @pytest.mark.asyncio
+async def test_extract_one_returns_input_too_long_without_request():
+    """When statement exceeds max_input_chars, return InputTooLong error
+    without making any HTTP call (saves a wasted server-side 400)."""
+    with respx.mock(base_url="http://vllm.test", assert_all_called=False) as mock:
+        route = mock.post("/v1/chat/completions")
+        async with httpx.AsyncClient(base_url="http://vllm.test") as client:
+            result = await extract_one(
+                client,
+                statement="x" * 100_000,
+                served_name="funding-extraction",
+                temperature=0.0,
+                max_tokens=512,
+                request_timeout=10.0,
+                max_retries=1,
+                max_input_chars=8000,
+            )
+
+    assert result.funders is None
+    assert result.error is not None
+    assert result.error.startswith("InputTooLong:")
+    assert "100000" in result.error
+    assert "8000" in result.error
+    assert result.raw == ""
+    assert route.call_count == 0, "should not have made an HTTP request"
+
+
+@pytest.mark.asyncio
 async def test_extract_one_records_http_error_after_max_retries():
     with respx.mock(base_url="http://vllm.test") as mock:
         mock.post("/v1/chat/completions").mock(return_value=httpx.Response(500, text="boom"))

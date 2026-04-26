@@ -74,7 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-retries", type=int, default=3)
     r.add_argument("--temperature", type=float, default=0.0)
     r.add_argument("--top-p", type=float, default=1.0)
-    r.add_argument("--max-tokens", type=int, default=1024)
+    r.add_argument("--max-tokens", type=int, default=2048)
+    r.add_argument("--max-input-chars", type=int, default=8000,
+                   help="Skip statements longer than this with InputTooLong error (no HTTP call). 0 disables.")
     r.add_argument("--no-resume", action="store_true")
     r.add_argument("--log-every", type=int, default=50)
 
@@ -125,6 +127,7 @@ class _RunCfg:
     max_tokens: int
     no_resume: bool
     log_every: int
+    max_input_chars: int | None = None
 
 
 def _run_cfg_from_args(args: argparse.Namespace):
@@ -146,6 +149,7 @@ def _run_cfg_from_args(args: argparse.Namespace):
         max_tokens=args.max_tokens,
         no_resume=args.no_resume,
         log_every=args.log_every,
+        max_input_chars=args.max_input_chars if args.max_input_chars > 0 else None,
     )
 
 

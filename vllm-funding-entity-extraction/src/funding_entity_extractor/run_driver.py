@@ -40,6 +40,7 @@ class RunConfig:
     max_tokens: int
     no_resume: bool
     log_every: int
+    max_input_chars: int | None = None
 
 
 def run_extraction(cfg: RunConfig) -> int:
@@ -117,6 +118,7 @@ async def _run_async(cfg: RunConfig) -> int:
         request_timeout=cfg.request_timeout,
         temperature=cfg.temperature,
         max_tokens=cfg.max_tokens,
+        max_input_chars=cfg.max_input_chars,
     )
 
     per_row: list[list] = [[None] * len(r[cfg.text_field]) for r in pending]

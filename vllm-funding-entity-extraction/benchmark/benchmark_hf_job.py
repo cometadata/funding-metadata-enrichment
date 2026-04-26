@@ -78,7 +78,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Client knobs
     p.add_argument("--concurrency", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.0)
-    p.add_argument("--max-tokens", type=int, default=1024)
+    p.add_argument("--max-tokens", type=int, default=2048)
+    p.add_argument("--max-input-chars", type=int, default=8000,
+                   help="Skip statements longer than this with InputTooLong error (no HTTP call). 0 disables.")
 
     # Server knobs (passed to `funding-extract serve`)
     p.add_argument("--vllm-port", type=int, default=8000)
@@ -276,6 +278,7 @@ async def _run_benchmark_extraction(
         request_timeout=60.0,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
+        max_input_chars=args.max_input_chars if args.max_input_chars > 0 else None,
     )
     wall_seconds = time.perf_counter() - t_start
 

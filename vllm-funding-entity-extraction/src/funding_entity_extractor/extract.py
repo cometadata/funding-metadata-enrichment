@@ -63,17 +63,34 @@ async def extract_one(
     max_tokens: int = 512,
     request_timeout: float = 60.0,
     max_retries: int = 3,
+    max_input_chars: int | None = None,
 ) -> StatementExtraction:
     """Send one chat-completion for one statement and return a StatementExtraction.
 
     Retries transient HTTP errors with exponential backoff + jitter. After
     `max_retries` exhausted, records the HTTP error in StatementExtraction.error
     and returns (rather than raising), so the caller can persist a row and move on.
+
+    If `max_input_chars` is set and `statement` exceeds it, returns an
+    `InputTooLong` result without making any HTTP call. Use this to short-circuit
+    upstream-data-quality outliers (e.g. a `predicted_statements` row that
+    accidentally captured an entire document) that would otherwise produce a
+    server-side 400 after a wasted round-trip.
     """
     t0 = time.perf_counter()
     raw = ""
     prompt_tokens = 0
     completion_tokens = 0
+
+    if max_input_chars is not None and len(statement) > max_input_chars:
+        return StatementExtraction(
+            funders=None,
+            raw="",
+            error=f"InputTooLong: {len(statement)} chars > {max_input_chars}",
+            latency_ms=(time.perf_counter() - t0) * 1000.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
 
     try:
         async for attempt in AsyncRetrying(
@@ -129,6 +146,7 @@ async def extract_statements(
     request_timeout: float = 60.0,
     temperature: float = 0.0,
     max_tokens: int = 512,
+    max_input_chars: int | None = None,
 ) -> list[StatementExtraction]:
     """Run `extract_one` over `statements` with bounded concurrency.
 
@@ -157,6 +175,7 @@ async def extract_statements(
                     max_tokens=max_tokens,
                     request_timeout=request_timeout,
                     max_retries=max_retries,
+                    max_input_chars=max_input_chars,
                 )
 
         await asyncio.gather(*(_worker(i, s) for i, s in enumerate(statements)))
