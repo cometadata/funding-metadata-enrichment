@@ -67,7 +67,3 @@ async def main():
 
 asyncio.run(main())
 ```
-
-## Benchmark
-
-`../hf_jobs/funding_entity_extractor/benchmark_hf_job.py` is a PEP 723 uv script designed for `hf jobs uv run`. See its docstring for invocation.
