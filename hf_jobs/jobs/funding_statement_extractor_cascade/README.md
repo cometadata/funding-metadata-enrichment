@@ -33,13 +33,15 @@ metadata.
 The PEP 723 header pins the package as a `git+https://` dependency:
 
 ```
-"funding-statement-extractor-cascade @ git+https://github.com/cometadata/funding-metadata-enrichment.git@main#subdirectory=funding_statement_extractor_cascade"
+"funding-statement-extractor-cascade @ git+https://github.com/cometadata/funding-metadata-enrichment.git@funding-statement-extractor-cascade#subdirectory=funding_statement_extractor_cascade"
 ```
 
 The header points at the `funding_statement_extractor_cascade` subdirectory of
-the `cometadata/funding-metadata-enrichment` repository. Adjust the branch/tag
-in `extract_funding_cascade_job.py` if you need a ref other than `main` before
-launching `hf jobs uv run`, otherwise the worker's environment build will fail.
+the `cometadata/funding-metadata-enrichment` repository. It currently pins the
+`funding-statement-extractor-cascade` branch so the job can be tested before
+that branch is merged; switch the ref back to `@main` in both
+`extract_funding_cascade_job.py` and `profile_on_h200.py` once it lands on
+`main`.
 
 ## CLI contract
 

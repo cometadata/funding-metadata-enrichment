@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
-#     "funding-statement-extractor-cascade @ git+https://github.com/cometadata/funding-metadata-enrichment.git@main#subdirectory=funding_statement_extractor_cascade",
+#     "funding-statement-extractor-cascade @ git+https://github.com/cometadata/funding-metadata-enrichment.git@funding-statement-extractor-cascade#subdirectory=funding_statement_extractor_cascade",
 #     "datasets>=3.0.0",
 #     "huggingface-hub>=0.26.0",
 #     "transformers>=4.49,<6",
