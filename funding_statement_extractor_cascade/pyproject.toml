@@ -1,0 +1,33 @@
+[project]
+name = "funding-statement-extractor-cascade"
+version = "0.1.0"
+description = "Cascade for extracting cleaned funding-acknowledgment statements from VLM-converted arXiv markdown."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pyarrow>=12.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "torch>=2.4.0",
+    "transformers>=4.49,<6",
+    "peft>=0.14.0",
+    "accelerate>=1.0",
+    "huggingface_hub>=0.26.0",
+    "rapidfuzz>=3.0",
+    "datasets>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+funding-statement-extractor-cascade = "funding_statement_extractor_cascade.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["funding_statement_extractor_cascade*"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
