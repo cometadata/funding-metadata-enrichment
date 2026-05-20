@@ -1,5 +1,4 @@
 import time
-import traceback
 from typing import List, Optional, Tuple
 
 import torch
@@ -87,16 +86,21 @@ def _run_stage3(text: str, rough_span: str, char_s: int, char_e: int,
         {"role": "system", "content": SYSTEM_CLEAN},
         {"role": "user", "content": user},
     ]
-    prompt_ids = models.qwen_tok.apply_chat_template(
-        messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
+    # return_dict=True yields a BatchEncoding (input_ids + attention_mask);
+    # generate() needs them unpacked — passing the BatchEncoding positionally
+    # makes generate() do `.shape` on a dict and raise a bare AttributeError.
+    inputs = models.qwen_tok.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True,
+        return_tensors="pt", return_dict=True,
     ).to(cfg.device)
     out = models.cleaner.generate(
-        prompt_ids,
+        **inputs,
         max_new_tokens=cfg.cleaner_max_new_tokens,
         do_sample=False,
         pad_token_id=models.qwen_tok.eos_token_id,
     )
-    decoded = models.qwen_tok.decode(out[0, prompt_ids.shape[1]:], skip_special_tokens=True).strip()
+    prompt_len = inputs["input_ids"].shape[1]
+    decoded = models.qwen_tok.decode(out[0, prompt_len:], skip_special_tokens=True).strip()
     if decoded.upper() == "NONE":
         return ""
     return decoded
@@ -142,5 +146,5 @@ def extract_funding(text: str, models: CascadeModels, cfg: CascadeConfig) -> Cas
             funding_statement="", rough_span="",
             chunk_prob=None, no_answer_prob=None,
             latency_ms=(time.perf_counter() - t0) * 1000.0,
-            error=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+            error=f"{type(exc).__name__}: {exc}",
         )

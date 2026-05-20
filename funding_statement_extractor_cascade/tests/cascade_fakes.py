@@ -33,6 +33,18 @@ class FakeMbTokenizer:
         }
 
 
+class FakeBatchEncoding(dict):
+    """Dict-like stand-in for transformers' BatchEncoding.
+
+    Crucially it is NOT a tensor — it has no `.shape`. This matches what real
+    `apply_chat_template(..., return_dict=True)` returns, so passing it
+    positionally to `generate()` would fail the same way production does.
+    """
+
+    def to(self, device):  # BatchEncoding.to() moves tensors and returns self
+        return self
+
+
 @dataclass
 class FakeQwenTokenizer:
     """Minimal stand-in for the Qwen tokenizer's chat-template + decode methods."""
@@ -42,13 +54,20 @@ class FakeQwenTokenizer:
     def __post_init__(self):
         self.captured_messages = []
 
-    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, return_tensors):
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt,
+                            return_tensors, return_dict=False):
         assert tokenize is True
         assert add_generation_prompt is True
         assert return_tensors == "pt"
         self.captured_messages.append(messages)
         # Pretend the rendered prompt is 10 tokens of zeros.
-        return torch.zeros((1, 10), dtype=torch.long)
+        ids = torch.zeros((1, 10), dtype=torch.long)
+        if return_dict:
+            return FakeBatchEncoding(
+                input_ids=ids,
+                attention_mask=torch.ones((1, 10), dtype=torch.long),
+            )
+        return ids
 
     def decode(self, ids: torch.Tensor, *, skip_special_tokens: bool) -> str:
         assert skip_special_tokens is True
@@ -94,11 +113,12 @@ class FakeCleaner:
         self._qwen_tok = qwen_tok
         self.last_prompt = None
 
-    def generate(self, prompt_ids: torch.Tensor, *, max_new_tokens: int,
-                 do_sample: bool, pad_token_id: int) -> torch.Tensor:
+    def generate(self, *, input_ids: torch.Tensor, attention_mask=None,
+                 max_new_tokens: int, do_sample: bool,
+                 pad_token_id: int) -> torch.Tensor:
         assert do_sample is False
-        self.last_prompt = prompt_ids
+        self.last_prompt = input_ids
         # Set up the fake tokenizer to return our canned string from decode().
         self._qwen_tok._canned_output = self._canned
         # Return prompt + a single synthetic generated token (the tokenizer ignores it).
-        return torch.cat([prompt_ids, torch.tensor([[1]])], dim=1)
+        return torch.cat([input_ids, torch.tensor([[1]])], dim=1)
