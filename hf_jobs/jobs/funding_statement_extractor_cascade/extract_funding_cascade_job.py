@@ -106,9 +106,11 @@ def stage_parquet_locally(rows, *, path_in_repo, staging_dir):
     if rows is None:
         rows = []
     table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
-    staging_dir = Path(staging_dir)
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    local_path = staging_dir / Path(path_in_repo).name
+    # Mirror the in-repo path under the staging dir so distinct outputs
+    # (e.g. predictions/vlm_markdown/test.parquet vs
+    # predictions/pymupdf_text/test.parquet) never collide on basename.
+    local_path = Path(staging_dir) / path_in_repo
+    local_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, local_path, compression="zstd")
     return local_path
 
@@ -180,7 +182,9 @@ def commit_staged_batch(staged, *, repo_id, batch_index, max_retries=5, retry_sl
     """Commit a batch of staged files in a single hub commit.
 
     ``staged`` is a list of dicts with keys ``path_in_repo`` and ``local_path``.
-    Retries on HTTP 429 up to ``max_retries`` times with ``retry_sleep_s`` between attempts.
+    Retries up to ``max_retries`` times with ``retry_sleep_s`` between attempts on
+    HTTP 429 (rate limit) and on commit conflicts (412 / "has happened since"),
+    which arise when several parallel jobs commit to the same repo at once.
     """
     if not staged:
         return
@@ -205,16 +209,21 @@ def commit_staged_batch(staged, *, repo_id, batch_index, max_retries=5, retry_sl
             return
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if "429" in str(exc):
+            msg = str(exc)
+            retryable = (
+                "429" in msg or "412" in msg
+                or "has happened since" in msg or "conflict" in msg.lower()
+            )
+            if retryable:
                 logger.warning(
-                    "create_commit hit 429 (attempt %d/%d); sleeping %.0fs",
-                    attempt + 1, max_retries, retry_sleep_s,
+                    "create_commit hit retryable error (attempt %d/%d); sleeping %.0fs: %s",
+                    attempt + 1, max_retries, retry_sleep_s, msg,
                 )
                 time.sleep(retry_sleep_s)
                 continue
             raise
     raise RuntimeError(
-        f"create_commit failed after {max_retries} retries on 429"
+        f"create_commit failed after {max_retries} retries"
     ) from last_exc
 
 
@@ -297,87 +306,90 @@ def main(argv=None) -> int:
     consecutive_commit_failures = 0
     MAX_CONSECUTIVE_COMMIT_FAILURES = 2
 
+    def docs_iter(ds, *, input_file, text_column, counters):
+        for row_idx, row in enumerate(ds):
+            if row.get("status") not in (None, "ok"):
+                counters["skipped_status"] += 1
+                continue
+            text = row.get(text_column)
+            if not text:
+                counters["skipped_empty"] += 1
+                continue
+            counters["processed"] += 1
+            yield DocPayload(
+                doc_id=str(row.get(args.id_column) or row_idx),
+                text=text,
+                metadata={
+                    "row_idx": row_idx,
+                    "input_file": input_file,
+                    "text_source": text_column,
+                    "arxiv_id": row.get(args.id_column),
+                    "shard_id": row.get("shard_id"),
+                    "text_length": len(text),
+                },
+            )
+
     for input_file in args.input_files:
-        t0 = time.perf_counter()
         logger.info("[start file=%s]", input_file)
         try:
             ds = _load_dataset(args.input_repo, input_file, "train", True)
-            counters = {"processed": 0, "skipped_status": 0, "skipped_empty": 0}
 
-            def docs_iter(text_column):
-                for row_idx, row in enumerate(ds):
-                    if row.get("status") not in (None, "ok"):
-                        counters["skipped_status"] += 1
-                        continue
-                    text = row.get(text_column)
-                    if not text:
-                        counters["skipped_empty"] += 1
-                        continue
-                    counters["processed"] += 1
-                    yield DocPayload(
-                        doc_id=str(row.get(args.id_column) or row_idx),
-                        text=text,
-                        metadata={
-                            "row_idx": row_idx,
-                            "input_file": input_file,
-                            "text_source": text_column,
-                            "arxiv_id": row.get(args.id_column),
-                            "shard_id": row.get("shard_id"),
-                            "text_length": len(text),
-                        },
-                    )
-
-            output_rows = []
             for text_column in args.text_columns:
-                col_start = counters["processed"]
+                t0 = time.perf_counter()
+                counters = {"processed": 0, "skipped_status": 0, "skipped_empty": 0}
                 logger.info("[start file=%s text_column=%s]", input_file, text_column)
-                for batch in _extract_funding_batch(docs_iter(text_column),
-                                                    models=models, cfg=cascade_cfg):
-                    output_rows.append(
-                        make_output_row(batch, skip_cleanup=args.skip_cleanup))
-                logger.info("[column_done file=%s text_column=%s rows=%d]",
-                            input_file, text_column,
-                            counters["processed"] - col_start)
 
-            out_path = f"predictions/{Path(input_file).name}"
-            local_path = stage_parquet_locally(
-                output_rows, path_in_repo=out_path, staging_dir=staging,
-            )
-            elapsed = time.perf_counter() - t0
-            staged_buffer.append({
-                "input_file": input_file,
-                "path_in_repo": out_path,
-                "local_path": local_path,
-                "rows": len(output_rows),
-                "elapsed_s": elapsed,
-            })
-            logger.info("[staged file=%s rows=%d local=%s buffered=%d]",
-                        input_file, len(output_rows), local_path, len(staged_buffer))
-            print(
-                f"[file_summary file={input_file} processed={counters['processed']} "
-                f"skipped_status={counters['skipped_status']} "
-                f"skipped_empty={counters['skipped_empty']}]",
-                flush=True,
-            )
+                col_rows = []
+                for batch in _extract_funding_batch(
+                        docs_iter(ds, input_file=input_file, text_column=text_column,
+                                  counters=counters),
+                        models=models, cfg=cascade_cfg):
+                    col_rows.append(make_output_row(batch, skip_cleanup=args.skip_cleanup))
 
-            if len(staged_buffer) >= args.commit_batch_size:
-                batch_index += 1
-                try:
-                    commit_staged_batch(staged_buffer, repo_id=args.output_repo,
-                                        batch_index=batch_index)
-                except Exception as commit_exc:
-                    consecutive_commit_failures += 1
-                    logger.exception("batch commit %d failed (%d/%d): %s",
-                                     batch_index, consecutive_commit_failures,
-                                     MAX_CONSECUTIVE_COMMIT_FAILURES, commit_exc)
-                    if consecutive_commit_failures >= MAX_CONSECUTIVE_COMMIT_FAILURES:
-                        logger.error("aborting after %d consecutive commit failures",
-                                     consecutive_commit_failures)
-                        return 4
-                else:
-                    emit_done_lines(staged_buffer)
-                    staged_buffer = []
-                    consecutive_commit_failures = 0
+                # One parquet per (input file x text column) so parallel
+                # single-column jobs never overwrite each other's output.
+                out_path = f"predictions/{text_column}/{Path(input_file).name}"
+                local_path = stage_parquet_locally(
+                    col_rows, path_in_repo=out_path, staging_dir=staging,
+                )
+                elapsed = time.perf_counter() - t0
+                staged_buffer.append({
+                    "input_file": input_file,
+                    "text_column": text_column,
+                    "path_in_repo": out_path,
+                    "local_path": local_path,
+                    "rows": len(col_rows),
+                    "elapsed_s": elapsed,
+                })
+                logger.info("[staged file=%s text_column=%s rows=%d local=%s buffered=%d]",
+                            input_file, text_column, len(col_rows), local_path,
+                            len(staged_buffer))
+                print(
+                    f"[file_summary file={input_file} text_column={text_column} "
+                    f"processed={counters['processed']} "
+                    f"skipped_status={counters['skipped_status']} "
+                    f"skipped_empty={counters['skipped_empty']}]",
+                    flush=True,
+                )
+
+                if len(staged_buffer) >= args.commit_batch_size:
+                    batch_index += 1
+                    try:
+                        commit_staged_batch(staged_buffer, repo_id=args.output_repo,
+                                            batch_index=batch_index)
+                    except Exception as commit_exc:
+                        consecutive_commit_failures += 1
+                        logger.exception("batch commit %d failed (%d/%d): %s",
+                                         batch_index, consecutive_commit_failures,
+                                         MAX_CONSECUTIVE_COMMIT_FAILURES, commit_exc)
+                        if consecutive_commit_failures >= MAX_CONSECUTIVE_COMMIT_FAILURES:
+                            logger.error("aborting after %d consecutive commit failures",
+                                         consecutive_commit_failures)
+                            return 4
+                    else:
+                        emit_done_lines(staged_buffer)
+                        staged_buffer = []
+                        consecutive_commit_failures = 0
         except Exception as exc:
             logger.exception("[fail file=%s] %s", input_file, exc)
 

@@ -18,8 +18,11 @@ Recommended image: `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel`. Flavor:
 
 `extract_funding_cascade_job.py` streams one or more input parquet files from a
 Hub dataset, runs the 3-stage cascade over every row, stages the predictions as
-a local parquet per input file, and pushes them to `predictions/*.parquet` in
-the output dataset repo. Commits are batched (see `--commit-batch-size`) and a
+a local parquet per (input file x text column), and pushes them to
+`predictions/<text_column>/<input_file>.parquet` in the output dataset repo.
+The per-column path means parallel single-column jobs writing to the same
+output repo never overwrite each other. Commits are batched (see
+`--commit-batch-size`) and a
 preflight commit probe runs before any GPU work so the worker exits cleanly if
 the Hub is rejecting writes.
 
@@ -51,7 +54,7 @@ that branch is merged; switch the ref back to `@main` in both
 | `--input-files` | yes | — | Comma-separated in-repo parquet paths. |
 | `--output-repo` | yes | — | HF dataset repo id to push predictions to. |
 | `--job-tag` | yes | — | Free-form tag for log correlation with the orchestrator. |
-| `--text-column` | no | `vlm_markdown` | Comma-separated text column(s) to run; one prediction set per column (3x rows for 3 columns), each tagged in the output `text_source` field. |
+| `--text-column` | no | `vlm_markdown` | Comma-separated text column(s) to run; one output parquet per column at `predictions/<text_column>/`, each row also tagged with `text_source`. |
 | `--id-column` | no | `doc_id` | Column with the per-row identifier. |
 | `--skip-cleanup` | no | off | Short-circuit Stage 3 (Qwen cleaner); emit the raw stage-2 span. |
 | `--dtype` | no | `bf16` | Model dtype: `auto`, `fp32`, `fp16`, `bf16`. |
@@ -66,9 +69,9 @@ The worker prints machine-parsed lines on stdout that the orchestrator consumes:
 - `[done file=<path> rows=<n> elapsed_s=<seconds>]` — emitted once per input
   file *after* its batch is committed to the Hub. The orchestrator parses this
   to mark the file done, record its row count, and update its EMA estimate.
-- `[file_summary file=<path> processed=<n> skipped_status=<n> skipped_empty=<n>]`
-  — emitted after each file is staged, giving a count of rows processed versus
-  rows skipped because of their `status` value or empty text.
+- `[file_summary file=<path> text_column=<col> processed=<n> skipped_status=<n> skipped_empty=<n>]`
+  — emitted after each (file x text column) is staged, giving a count of rows
+  processed versus rows skipped because of their `status` value or empty text.
 
 The worker also logs `[start file=...]`, `[staged file=...]`, and `[fail file=...]`
 lines, but only `[done ...]` and `[file_summary ...]` are part of the contract.
@@ -85,7 +88,7 @@ lines, but only `[done ...]` and `[file_summary ...]` are part of the contract.
 
 ## Output schema
 
-Each `predictions/*.parquet` file has the following columns:
+Each `predictions/<text_column>/<input_file>.parquet` file has the following columns:
 
 | Column | Type | Notes |
 |---|---|---|
