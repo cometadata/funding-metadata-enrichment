@@ -344,7 +344,7 @@ def test_preflight_commit_check_raises_after_exhaustion(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
     import pytest
-    with pytest.raises(RuntimeError, match="preflight commit still 429"):
+    with pytest.raises(RuntimeError, match="preflight commit still failing"):
         mod.preflight_commit_check("org/repo", job_tag="t3", staging_dir=tmp_path)
 
 
