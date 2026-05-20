@@ -1,6 +1,6 @@
 # Funding Extraction Evaluation
 
-Evaluate cascade funding-statement predictions against a gold file, scored
+Evaluate funding-statement extractions against a gold file, scored
 across five match-strictness tiers under two match definitions.
 
 ## Tiers
@@ -15,9 +15,9 @@ across five match-strictness tiers under two match definitions.
 
 Each tier is scored under two match definitions:
 
-- **equality** — prediction vs gold as whole statements; penalizes under- and
+- equality — prediction vs gold as whole statements; penalizes under- and
   over-extraction.
-- **containment** — the prediction is found *within* the gold statement;
+- containment — the prediction is found *within* the gold statement;
   credits a correct fragment of a longer gold statement.
 
 Precision/recall are cumulative at each tier — a document is correct at tier X
@@ -32,9 +32,9 @@ recall@X    = correct@X / documents with a gold statement
 
 All inputs are local files — `.parquet`, `.json`, or `.jsonl`.
 
-- Predictions (`-p/--predictions`): a **file** with per-document records
+- Predictions (`-p/--predictions`): a file with per-document records
   carrying `doc_id` and `funding_statement` (optionally `text_source`), or a
-  **directory** — every parquet/JSON under it is read, and a containing
+  directory — every parquet/JSON under it is read, and a containing
   subdirectory name labels each file's `text_source` when the column is absent.
   So a downloaded `predictions/<text_source>/<split>.parquet` tree is scored
   per source; non-prediction files (e.g. `worker_status/*.json`) are skipped.
