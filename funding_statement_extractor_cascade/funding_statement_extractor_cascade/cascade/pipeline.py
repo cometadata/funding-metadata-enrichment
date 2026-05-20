@@ -1,4 +1,5 @@
 import time
+import traceback
 from typing import List, Optional, Tuple
 
 import torch
@@ -141,5 +142,5 @@ def extract_funding(text: str, models: CascadeModels, cfg: CascadeConfig) -> Cas
             funding_statement="", rough_span="",
             chunk_prob=None, no_answer_prob=None,
             latency_ms=(time.perf_counter() - t0) * 1000.0,
-            error=f"{type(exc).__name__}: {exc}",
+            error=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
         )
