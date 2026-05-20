@@ -14,7 +14,7 @@ def test_parse_args_minimum_defaults():
         "--output-repo", "user/cascade-bench-out",
         "--job-tag", "cascade-bench-001",
     ])
-    assert args.text_column == "vlm_markdown"
+    assert args.text_columns == ["vlm_markdown"]
     assert args.id_column == "doc_id"
     assert args.dtype == "bf16"
     assert args.skip_cleanup is False
@@ -28,6 +28,15 @@ def test_parse_args_input_files_strips_whitespace():
         "--output-repo", "y", "--job-tag", "z",
     ])
     assert args.input_files == ["a.parquet", "b.parquet"]
+
+
+def test_parse_args_text_column_accepts_comma_list():
+    args = parse_args([
+        "--input-repo", "x", "--input-files", "a.parquet",
+        "--output-repo", "y", "--job-tag", "z",
+        "--text-column", " vlm_markdown , pymupdf_text ,pymupdf_markdown ",
+    ])
+    assert args.text_columns == ["vlm_markdown", "pymupdf_text", "pymupdf_markdown"]
 
 
 def test_parse_args_skip_cleanup_flag():
@@ -90,8 +99,8 @@ def test_stage_parquet_locally_empty_uses_explicit_schema(tmp_path):
     assert local.exists()
     tbl = pq.read_table(local)
     assert tbl.num_rows == 0
-    expected = {"doc_id", "arxiv_id", "shard_id", "input_file", "row_idx",
-                "funding_statement", "rough_span", "chunk_prob",
+    expected = {"doc_id", "arxiv_id", "shard_id", "input_file", "text_source",
+                "row_idx", "funding_statement", "rough_span", "chunk_prob",
                 "no_answer_prob", "text_length", "latency_ms", "skip_cleanup",
                 "error"}
     assert set(tbl.column_names) == expected
@@ -100,7 +109,7 @@ def test_stage_parquet_locally_empty_uses_explicit_schema(tmp_path):
 def test_stage_parquet_locally_writes_rows(tmp_path):
     rows = [{
         "doc_id": "x", "arxiv_id": "x", "shard_id": "s",
-        "input_file": "f.parquet", "row_idx": 0,
+        "input_file": "f.parquet", "text_source": "vlm_markdown", "row_idx": 0,
         "funding_statement": "Funded.", "rough_span": "Funded",
         "chunk_prob": 0.9, "no_answer_prob": 0.1,
         "text_length": 100, "latency_ms": 1.0, "skip_cleanup": False, "error": None,
@@ -335,7 +344,7 @@ def test_main_end_to_end_with_mocks(tmp_path, monkeypatch):
     ]
 
     def fake_load_dataset(repo, data_files, split, streaming):
-        return iter(fake_rows)
+        return fake_rows  # list — re-iterable, mirrors a streaming IterableDataset
 
     def fake_load_models(cfg):
         return SimpleNamespace()
@@ -377,3 +386,61 @@ def test_main_end_to_end_with_mocks(tmp_path, monkeypatch):
     tbl = pq.read_table(staged)
     assert tbl.num_rows == 2
     assert "funding-2401.00001" in tbl.column("funding_statement").to_pylist()
+    assert set(tbl.column("text_source").to_pylist()) == {"vlm_markdown"}
+
+
+def test_main_multi_text_column(tmp_path, monkeypatch):
+    """Two text columns → one parquet with 2x rows, tagged by text_source."""
+    import extract_funding_cascade_job as mod
+    from types import SimpleNamespace
+
+    fake_rows = [
+        {"vlm_markdown": "A vlm", "pymupdf_text": "A pdf",
+         "doc_id": "2401.00001", "status": "ok", "shard_id": "s0"},
+        {"vlm_markdown": "B vlm", "pymupdf_text": "B pdf",
+         "doc_id": "2401.00002", "status": "ok", "shard_id": "s0"},
+    ]
+
+    def fake_load_dataset(repo, data_files, split, streaming):
+        return fake_rows  # re-iterable across both text columns
+
+    def fake_extract_batch(documents, *, models, cfg):
+        for d in documents:
+            result = SimpleNamespace(
+                funding_statement=f"{d.metadata['text_source']}-{d.doc_id}",
+                rough_span="rs", chunk_prob=0.9, no_answer_prob=0.05,
+                latency_ms=10.0, error=None,
+            )
+            yield SimpleNamespace(doc_id=d.doc_id, result=result,
+                                  enqueue_ts=0.0, yield_ts=0.01,
+                                  metadata=d.metadata)
+
+    monkeypatch.setattr(mod, "_load_dataset", fake_load_dataset, raising=False)
+    monkeypatch.setattr(mod, "_load_models", lambda cfg: SimpleNamespace(),
+                        raising=False)
+    monkeypatch.setattr(mod, "_extract_funding_batch", fake_extract_batch,
+                        raising=False)
+
+    class FakeApi:
+        def upload_file(self, **kw): pass
+        def create_commit(self, **kw): pass
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    monkeypatch.setenv("EXTRACT_FUNDING_STAGING", str(tmp_path))
+
+    rc = mod.main([
+        "--input-repo", "ds", "--input-files", "test-00000.parquet",
+        "--output-repo", "out-repo", "--job-tag", "tag-multi",
+        "--text-column", "vlm_markdown,pymupdf_text",
+        "--allow-cpu", "--skip-preflight",
+    ])
+    assert rc == 0
+    import pyarrow.parquet as pq
+    tbl = pq.read_table(tmp_path / "test-00000.parquet")
+    assert tbl.num_rows == 4  # 2 rows x 2 text columns
+    assert sorted(tbl.column("text_source").to_pylist()) == [
+        "pymupdf_text", "pymupdf_text", "vlm_markdown", "vlm_markdown",
+    ]
+    funding = tbl.column("funding_statement").to_pylist()
+    assert "vlm_markdown-2401.00001" in funding
+    assert "pymupdf_text-2401.00002" in funding

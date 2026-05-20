@@ -41,6 +41,7 @@ OUTPUT_SCHEMA = pa.schema([
     pa.field("arxiv_id", pa.string()),
     pa.field("shard_id", pa.string()),
     pa.field("input_file", pa.string()),
+    pa.field("text_source", pa.string()),
     pa.field("row_idx", pa.int64()),
     pa.field("funding_statement", pa.string()),
     pa.field("rough_span", pa.string()),
@@ -65,7 +66,10 @@ def parse_args(argv=None):
     p.add_argument("--output-repo", required=True)
     p.add_argument("--job-tag", required=True,
                    help="Free-form tag for log correlation with the orchestrator.")
-    p.add_argument("--text-column", default="vlm_markdown")
+    p.add_argument("--text-column", dest="text_columns", default=["vlm_markdown"],
+                   type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+                   help="Comma-separated text column(s); one prediction set per "
+                        "column, tagged in the output `text_source` field.")
     p.add_argument("--id-column", default="doc_id")
     p.add_argument("--skip-cleanup", action="store_true",
                    help="Short-circuit Stage 3 (Qwen cleaner); emit raw stage-2 span.")
@@ -85,6 +89,7 @@ def make_output_row(batch_result, *, skip_cleanup: bool):
         "arxiv_id": meta.get("arxiv_id"),
         "shard_id": meta.get("shard_id"),
         "input_file": meta.get("input_file"),
+        "text_source": meta.get("text_source"),
         "row_idx": meta.get("row_idx"),
         "funding_statement": r.funding_statement,
         "rough_span": r.rough_span,
@@ -244,8 +249,9 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s",
                         stream=sys.stdout)
-    logger.info("job_tag=%s input_files=%d skip_cleanup=%s",
-                args.job_tag, len(args.input_files), args.skip_cleanup)
+    logger.info("job_tag=%s input_files=%d text_columns=%s skip_cleanup=%s",
+                args.job_tag, len(args.input_files),
+                ",".join(args.text_columns), args.skip_cleanup)
 
     import torch
 
@@ -298,12 +304,12 @@ def main(argv=None) -> int:
             ds = _load_dataset(args.input_repo, input_file, "train", True)
             counters = {"processed": 0, "skipped_status": 0, "skipped_empty": 0}
 
-            def docs_iter():
+            def docs_iter(text_column):
                 for row_idx, row in enumerate(ds):
                     if row.get("status") not in (None, "ok"):
                         counters["skipped_status"] += 1
                         continue
-                    text = row.get(args.text_column)
+                    text = row.get(text_column)
                     if not text:
                         counters["skipped_empty"] += 1
                         continue
@@ -314,6 +320,7 @@ def main(argv=None) -> int:
                         metadata={
                             "row_idx": row_idx,
                             "input_file": input_file,
+                            "text_source": text_column,
                             "arxiv_id": row.get(args.id_column),
                             "shard_id": row.get("shard_id"),
                             "text_length": len(text),
@@ -321,9 +328,16 @@ def main(argv=None) -> int:
                     )
 
             output_rows = []
-            for batch in _extract_funding_batch(docs_iter(), models=models,
-                                                cfg=cascade_cfg):
-                output_rows.append(make_output_row(batch, skip_cleanup=args.skip_cleanup))
+            for text_column in args.text_columns:
+                col_start = counters["processed"]
+                logger.info("[start file=%s text_column=%s]", input_file, text_column)
+                for batch in _extract_funding_batch(docs_iter(text_column),
+                                                    models=models, cfg=cascade_cfg):
+                    output_rows.append(
+                        make_output_row(batch, skip_cleanup=args.skip_cleanup))
+                logger.info("[column_done file=%s text_column=%s rows=%d]",
+                            input_file, text_column,
+                            counters["processed"] - col_start)
 
             out_path = f"predictions/{Path(input_file).name}"
             local_path = stage_parquet_locally(

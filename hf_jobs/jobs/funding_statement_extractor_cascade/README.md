@@ -51,7 +51,7 @@ that branch is merged; switch the ref back to `@main` in both
 | `--input-files` | yes | — | Comma-separated in-repo parquet paths. |
 | `--output-repo` | yes | — | HF dataset repo id to push predictions to. |
 | `--job-tag` | yes | — | Free-form tag for log correlation with the orchestrator. |
-| `--text-column` | no | `vlm_markdown` | Column containing the markdown text. |
+| `--text-column` | no | `vlm_markdown` | Comma-separated text column(s) to run; one prediction set per column (3x rows for 3 columns), each tagged in the output `text_source` field. |
 | `--id-column` | no | `doc_id` | Column with the per-row identifier. |
 | `--skip-cleanup` | no | off | Short-circuit Stage 3 (Qwen cleaner); emit the raw stage-2 span. |
 | `--dtype` | no | `bf16` | Model dtype: `auto`, `fp32`, `fp16`, `bf16`. |
@@ -93,6 +93,7 @@ Each `predictions/*.parquet` file has the following columns:
 | `arxiv_id` | string | Copied from the input `--id-column`. |
 | `shard_id` | string | Copied from the input `shard_id` column, if present. |
 | `input_file` | string | The in-repo path of the source parquet. |
+| `text_source` | string | The input text column this prediction was run on (e.g. `vlm_markdown`). |
 | `row_idx` | int64 | Zero-based row index within the source parquet. |
 | `funding_statement` | string | Cleaned answer; `""` if no funding found. |
 | `rough_span` | string | Pre-cleanup stage-2 output; `""` if none. |
