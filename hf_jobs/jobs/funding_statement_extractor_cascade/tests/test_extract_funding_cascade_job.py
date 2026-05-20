@@ -191,6 +191,35 @@ def test_commit_staged_batch_retries_on_429(tmp_path, monkeypatch):
     assert len(sleeps) == 2
 
 
+def test_commit_staged_batch_retries_on_commit_conflict(tmp_path, monkeypatch):
+    """Concurrent jobs committing to one repo hit 412 conflicts — these retry."""
+    import extract_funding_cascade_job as mod
+
+    attempts = {"n": 0}
+
+    class FakeApi:
+        def create_commit(self, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise RuntimeError(
+                    "412 Client Error: A commit has happened since")
+
+    monkeypatch.setattr(mod, "HfApi", lambda: FakeApi())
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    local = mod.stage_parquet_locally(
+        [], path_in_repo="predictions/vlm_markdown/x.parquet", staging_dir=tmp_path,
+    )
+    staged = [{
+        "input_file": "x.parquet", "text_column": "vlm_markdown",
+        "path_in_repo": "predictions/vlm_markdown/x.parquet",
+        "local_path": local, "rows": 0, "elapsed_s": 1.0,
+    }]
+    mod.commit_staged_batch(staged, repo_id="org/repo", batch_index=1,
+                            retry_sleep_s=0.0)
+    assert attempts["n"] == 2
+
+
 def test_commit_staged_batch_empty_is_noop(monkeypatch):
     import extract_funding_cascade_job as mod
 
@@ -380,7 +409,7 @@ def test_main_end_to_end_with_mocks(tmp_path, monkeypatch):
     assert rc == 0
     # Exactly one final commit
     assert len(commits) == 1
-    staged = (tmp_path / "test-00000.parquet")
+    staged = tmp_path / "predictions" / "vlm_markdown" / "test-00000.parquet"
     assert staged.exists()
     import pyarrow.parquet as pq
     tbl = pq.read_table(staged)
@@ -390,7 +419,7 @@ def test_main_end_to_end_with_mocks(tmp_path, monkeypatch):
 
 
 def test_main_multi_text_column(tmp_path, monkeypatch):
-    """Two text columns → one parquet with 2x rows, tagged by text_source."""
+    """Two text columns → one parquet per column under predictions/<col>/."""
     import extract_funding_cascade_job as mod
     from types import SimpleNamespace
 
@@ -436,11 +465,11 @@ def test_main_multi_text_column(tmp_path, monkeypatch):
     ])
     assert rc == 0
     import pyarrow.parquet as pq
-    tbl = pq.read_table(tmp_path / "test-00000.parquet")
-    assert tbl.num_rows == 4  # 2 rows x 2 text columns
-    assert sorted(tbl.column("text_source").to_pylist()) == [
-        "pymupdf_text", "pymupdf_text", "vlm_markdown", "vlm_markdown",
-    ]
-    funding = tbl.column("funding_statement").to_pylist()
-    assert "vlm_markdown-2401.00001" in funding
-    assert "pymupdf_text-2401.00002" in funding
+    # One parquet per column, under predictions/<text_column>/.
+    vlm = pq.read_table(tmp_path / "predictions" / "vlm_markdown" / "test-00000.parquet")
+    pdf = pq.read_table(tmp_path / "predictions" / "pymupdf_text" / "test-00000.parquet")
+    assert vlm.num_rows == 2 and pdf.num_rows == 2
+    assert set(vlm.column("text_source").to_pylist()) == {"vlm_markdown"}
+    assert set(pdf.column("text_source").to_pylist()) == {"pymupdf_text"}
+    assert "vlm_markdown-2401.00001" in vlm.column("funding_statement").to_pylist()
+    assert "pymupdf_text-2401.00002" in pdf.column("funding_statement").to_pylist()
