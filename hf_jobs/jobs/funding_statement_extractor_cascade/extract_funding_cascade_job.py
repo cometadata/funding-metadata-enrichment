@@ -164,17 +164,23 @@ def preflight_commit_check(repo_id, *, job_tag, max_wait_s=1800.0, staging_dir=N
             return
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if "429" not in str(exc):
+            msg = str(exc)
+            retryable = (
+                "429" in msg or "412" in msg
+                or "has happened since" in msg or "conflict" in msg.lower()
+            )
+            if not retryable:
                 raise
-            hint = _parse_retry_hint_seconds(str(exc))
+            hint = _parse_retry_hint_seconds(msg)
             wait_s = min(hint or 60.0, max_wait_s)
             logger.warning(
-                "preflight hit 429 (attempt %d/8); HF hint=%s, sleeping %.0fs",
-                attempt + 1, hint, wait_s,
+                "preflight hit retryable error (attempt %d/8); HF hint=%s, "
+                "sleeping %.0fs: %s",
+                attempt + 1, hint, wait_s, msg,
             )
             time.sleep(wait_s)
     raise RuntimeError(
-        "preflight commit still 429 after exhausting retry budget"
+        "preflight commit still failing after exhausting retry budget"
     ) from last_exc
 
 
