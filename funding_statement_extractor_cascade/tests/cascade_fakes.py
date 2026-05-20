@@ -60,7 +60,6 @@ class FakeQwenTokenizer:
         assert add_generation_prompt is True
         assert return_tensors == "pt"
         self.captured_messages.append(messages)
-        # Pretend the rendered prompt is 10 tokens of zeros.
         ids = torch.zeros((1, 10), dtype=torch.long)
         if return_dict:
             return FakeBatchEncoding(
@@ -118,7 +117,5 @@ class FakeCleaner:
                  pad_token_id: int) -> torch.Tensor:
         assert do_sample is False
         self.last_prompt = input_ids
-        # Set up the fake tokenizer to return our canned string from decode().
         self._qwen_tok._canned_output = self._canned
-        # Return prompt + a single synthetic generated token (the tokenizer ignores it).
         return torch.cat([input_ids, torch.tensor([[1]])], dim=1)
