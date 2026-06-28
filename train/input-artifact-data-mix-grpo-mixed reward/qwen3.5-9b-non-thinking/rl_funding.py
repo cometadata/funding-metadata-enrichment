@@ -45,6 +45,7 @@ if _HAS_TINKER:
         batch_size: int = 16
         group_size: int = 8
         max_steps: int | None = None
+        remove_constant_reward_groups: bool = False  # skip groups with no reward variance (no gradient)
 
         # KL penalty against SFT reference
         kl_penalty_coef: float = 0.03
@@ -124,6 +125,7 @@ if _HAS_TINKER:
             eval_every=cli.eval_every,
             save_every=cli.save_every,
             max_steps=cli.max_steps,
+            remove_constant_reward_groups=cli.remove_constant_reward_groups,
             load_checkpoint_path=cli.load_checkpoint_path,
             kl_penalty_coef=cli.kl_penalty_coef,
             kl_reference_config=kl_reference_config,
