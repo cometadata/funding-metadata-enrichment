@@ -68,6 +68,37 @@ def _token_containment(shorter: str, longer: str) -> float:
     return len(short_toks & long_toks) / len(short_toks)
 
 
+# Function words skipped when deriving an acronym from an expansion (multilingual).
+_ACRONYM_STOPWORDS = {
+    "of", "for", "the", "and", "in", "on", "at", "to", "a", "an", "by", "with",
+    "de", "del", "la", "el", "los", "las", "y", "e", "da", "do", "dos", "das",
+    "du", "des", "le", "les", "der", "die", "das", "und", "von", "fur", "für",
+    "per", "il", "lo", "gli", "i", "della", "delle", "au", "aux", "et",
+    "l", "d", "o", "na", "no",
+}
+_ACR_WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+")
+
+
+def _alnum_upper(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", s).upper()
+
+
+def _generate_acronyms(expansion: str) -> set:
+    """Candidate acronyms from an expansion's word initials (content / all / capitalized)."""
+    words = _ACR_WORD_RE.findall(expansion)
+    if not words:
+        return set()
+    cands = set()
+    content = [w for w in words if w.lower() not in _ACRONYM_STOPWORDS]
+    if content:
+        cands.add("".join(w[0] for w in content).upper())
+    cands.add("".join(w[0] for w in words).upper())
+    caps = [w for w in words if w[:1].isupper()]
+    if caps:
+        cands.add("".join(w[0] for w in caps).upper())
+    return {c for c in cands if len(c) >= 2}
+
+
 def similarity_permissive(a: str, b: str) -> float:
     """Original permissive similarity (partial_ratio + token_set_ratio, no length damping)."""
     na = normalize_text(a)
@@ -111,6 +142,23 @@ def similarity(a: str, b: str) -> float:
     containment = _token_containment(shorter, longer)
     if containment >= 1.0 and len_ratio >= _CONTAINMENT_FLOOR:
         return max(token_sort, 0.85)
+
+    # Acronym ↔ expansion: shorter is the longer's word-initials ("ERC" ↔
+    # "European Research Council") or an all-caps token in it ("NIH" ↔ "NIH/NCI").
+    cand = _alnum_upper(shorter)
+    short_is_acronymish = (
+        2 <= len(cand) <= 9
+        and len(shorter.split()) <= 2
+        and shorter.replace(".", "").replace("/", "").replace("-", "").isalnum()
+    )
+    if short_is_acronymish:
+        if cand in _generate_acronyms(longer):
+            return max(token_sort, 0.88)
+        if len(cand) >= 3 and cand.isalpha() and shorter.upper() == shorter:
+            long_toks = {_alnum_upper(t) for t in _TOKEN_SPLIT_RE.split(longer) if t}
+            short_toks = {_alnum_upper(t) for t in _TOKEN_SPLIT_RE.split(shorter) if t}
+            if short_toks and short_toks <= long_toks:
+                return max(token_sort, 0.85)
 
     return token_sort
 
