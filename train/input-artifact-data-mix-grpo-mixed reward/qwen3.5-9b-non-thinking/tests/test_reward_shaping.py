@@ -1,9 +1,7 @@
 # tests/test_reward_shaping.py
 """Tests for RL reward shaping — compute_shaped_reward in funding_reward.py.
 
-Lives alongside test_reward.py but is distinct: test_reward.py guards the
-canonical evaluation reward (strict binary scoring), while this file tests
-the RL-only reward shaping (soft matching + flat-id term).
+Tests the RL-only reward shaping (soft matching + flat-id term).
 """
 
 import sys
